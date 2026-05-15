@@ -69,7 +69,13 @@ LOG="$(mktemp -t fc-k3s-test.XXXXXX.log)"
 TEST_OUTPUTS_DIR="${TEST_UNDECLARED_OUTPUTS_DIR:-$(mktemp -d -t fc-k3s-outputs.XXXXXX)}"
 mkdir -p "$TEST_OUTPUTS_DIR"
 cp_log="$TEST_OUTPUTS_DIR/serial.log"
-report_dst="${SCENARIO_REPORT_PATH:-$TEST_OUTPUTS_DIR/report.json}"
+# Always materialize the report inside TEST_UNDECLARED_OUTPUTS_DIR (bazel
+# zips that into bazel-testlogs/.../test.outputs/outputs.zip and persists
+# it across runs). If SCENARIO_REPORT_PATH is also set we'll best-effort
+# copy the finished report there too — but the sandbox usually can't
+# write to caller-provided host paths, so the persistent location is the
+# source of truth and SCENARIO_REPORT_PATH is just a convenience.
+report_dst="$TEST_OUTPUTS_DIR/report.json"
 
 trap 'cp -f "$LOG" "$cp_log" 2>/dev/null || true; rm -f "$LOG"' EXIT
 
@@ -111,18 +117,19 @@ sleep 0.2
 kill "$TAIL_PID" 2>/dev/null || true
 wait "$TAIL_PID" 2>/dev/null || true
 
-# Extract the report JSON between the markers. Strip ANSI color from the
-# k3s log lines that bleed into the same stream, then sed-cut the block.
+# Extract the report JSON between the markers, then trim anything before
+# the first '{' line — even with k3s logs muted, an occasional kernel
+# message or async writer can sneak into the marker block.
 awk '
   /===REPORT_BEGIN===/ { capturing=1; next }
   /===REPORT_END===/   { capturing=0; next }
   capturing            { print }
 ' "$LOG" > "$report_dst.raw" || true
 
-# The k3s server output is interleaved with init's marker prints because
-# both go to /dev/console concurrently. Carriage returns from k3s' log
-# can also tangle the stream. Strip CR/LF noise and validate JSON.
+# Strip CR/LF noise.
 sed -i 's/\r$//' "$report_dst.raw" 2>/dev/null || true
+# Drop everything before the first line whose first non-space char is '{'.
+sed -i -n '/^[[:space:]]*{/,$p' "$report_dst.raw" 2>/dev/null || true
 
 if [ ! -s "$report_dst.raw" ]; then
   echo "fc-k3s-test: no report JSON found between markers (vm log copy at $cp_log)" >&2
@@ -135,6 +142,20 @@ if command -v jq >/dev/null && jq empty "$report_dst.raw" >/dev/null 2>&1; then
   jq . "$report_dst.raw" > "$report_dst"
 else
   cp "$report_dst.raw" "$report_dst"
+fi
+
+# Best-effort mirror to the caller's path (eval.sh-style invocation).
+# Sandboxed tests can't write to arbitrary host paths so this is allowed
+# to fail silently — the persistent copy at $TEST_OUTPUTS_DIR/report.json
+# (bazel-testlogs/.../test.outputs/outputs.zip!report.json) is the source
+# of truth.
+if [ -n "${SCENARIO_REPORT_PATH:-}" ] && [ "$SCENARIO_REPORT_PATH" != "$report_dst" ]; then
+  if mkdir -p "$(dirname "$SCENARIO_REPORT_PATH")" 2>/dev/null && \
+     cp "$report_dst" "$SCENARIO_REPORT_PATH" 2>/dev/null; then
+    echo "fc-k3s-test: mirrored report to $SCENARIO_REPORT_PATH" >&2
+  else
+    echo "fc-k3s-test: SCENARIO_REPORT_PATH=$SCENARIO_REPORT_PATH unwritable from sandbox; persistent copy at outputs.zip!report.json" >&2
+  fi
 fi
 
 if ! command -v jq >/dev/null; then

@@ -135,7 +135,12 @@ K3S_EXEC="/usr/local/bin/k3s server \
   --data-dir=/var/lib/rancher/k3s"
 
 log "starting k3s: $K3S_EXEC"
-( $K3S_EXEC 2>&1 | tee /var/log/k3s.log > /dev/console ) &
+# Send k3s logs ONLY to /var/log/k3s.log — never to /dev/console.
+# k3s logs pour out continuously and would interleave with the marker
+# block / report JSON the host launcher scrapes between
+# ===REPORT_BEGIN===/===REPORT_END===, breaking jq parsing.
+# (When k3s fails to come up, the failure path tails the log to console.)
+( $K3S_EXEC > /var/log/k3s.log 2>&1 ) &
 K3S_PID=$!
 
 # --- Stage 4: wait for k3s to be Ready ---
