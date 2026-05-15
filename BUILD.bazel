@@ -1,0 +1,56 @@
+# Firecracker microVM tooling. See defs.bzl for the public macro API.
+#
+# `vmlinux`        — the firecracker boot kernel (Linux 6.1.102), fetched +
+#                    sha256-pinned via the http_file in //MODULE.bazel.
+# `busybox_static` — busybox 1.35.0 x86_64-musl from busybox.net, pinned by
+#                    sha256 in //MODULE.bazel. The chmod-+x wrapper genrule
+#                    is needed because http_file doesn't preserve the upstream
+#                    file mode (busybox.net serves the binary at 0664).
+# `mkinitramfs`    — sh_binary tool consumed by firecracker_initramfs.
+# `mkrootfs`       — sh_binary tool consumed by firecracker_rootfs.
+# `gen_test`       — sh_binary tool consumed by firecracker_test.
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+alias(
+    name = "vmlinux",
+    actual = "@firecracker_vmlinux//file",
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "busybox_static",
+    srcs = ["@busybox_static_x86_64//file"],
+    outs = ["busybox-static"],
+    cmd = "cp $< $@ && chmod +x $@",
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "mkinitramfs",
+    srcs = ["mkinitramfs.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "mkrootfs",
+    srcs = ["mkrootfs.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "mkcontainerfs",
+    srcs = ["mkcontainerfs.sh"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "gen_test",
+    srcs = ["gen_test.sh"],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    ["runner.sh.tpl"],
+    visibility = ["//visibility:public"],
+)
