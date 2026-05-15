@@ -38,6 +38,20 @@ Public API:
       VM cleanly. The macro expands to a runnable `firecracker_microvm`
       named `<name>`. Useful for booting kubernetes node images or
       single-container workloads under VM isolation.
+
+  firecracker_k3s_test(name, test_binary, scenario, extra_manifests,
+                       extra_images, extra_files, extra_execs,
+                       timeout_seconds, vcpus, mem_mib, size_mb)
+      Boot a single-node k3s server inside a firecracker microVM and
+      run a statically-linked guest-side `test_binary` against it. K3s
+      is installed directly onto the rootfs (the static k3s binary at
+      /usr/local/bin/k3s; runs as PID-1's child, no container nesting).
+      The test binary reads its kubeconfig from
+      /etc/rancher/k3s/k3s.yaml, writes a lib/clusterharness Report JSON
+      to its --report-json path, and the host launcher (a `sh_test`)
+      scrapes that JSON out of the serial console between
+      `===REPORT_BEGIN===`/`===REPORT_END===` markers. Pass/fail is
+      decided by every pass_condition being passed=true.
 """
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
@@ -45,10 +59,14 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 _DEFAULT_BUSYBOX = "//tools/firecracker:busybox_static"
 _DEFAULT_KERNEL = "//tools/firecracker:vmlinux"
+_DEFAULT_K3S = "//tools/firecracker:k3s_binary"
 _MKINITRAMFS = "//tools/firecracker:mkinitramfs"
 _MKROOTFS = "//tools/firecracker:mkrootfs"
 _MKCONTAINERFS = "//tools/firecracker:mkcontainerfs"
+_MKK3SROOTFS = "//tools/firecracker:mkk3srootfs"
 _GEN_TEST = "//tools/firecracker:gen_test"
+_GEN_K3S_TEST = "//tools/firecracker:gen_k3s_test"
+_K3S_INIT = "//tools/firecracker:k3s_init.sh"
 _RUNNER_TPL = "//tools/firecracker:runner.sh.tpl"
 
 # `random.trust_cpu=on` lets the kernel seed its RNG from RDRAND so
@@ -373,5 +391,156 @@ def firecracker_container(
         mem_mib = mem_mib,
         visibility = visibility,
         tags = tags,
+        **kwargs
+    )
+
+def firecracker_k3s_test(
+        name,
+        test_binary,
+        scenario,
+        extra_manifests = {},
+        extra_images = {},
+        extra_files = {},
+        extra_execs = {},
+        timeout_seconds = 300,
+        vcpus = 2,
+        mem_mib = 2048,
+        size_mb = 2048,
+        kernel = _DEFAULT_KERNEL,
+        kernel_cmdline = _DEFAULT_CMDLINE,
+        busybox = _DEFAULT_BUSYBOX,
+        k3s = _DEFAULT_K3S,
+        init = _K3S_INIT,
+        size = "enormous",
+        visibility = None,
+        tags = None,
+        **kwargs):
+    """Boot a single-node k3s cluster in a firecracker microVM and run a guest-side test binary against it.
+
+    The test binary is responsible for:
+      1. Reading the kubeconfig at /etc/rancher/k3s/k3s.yaml.
+      2. Writing a lib/clusterharness Report JSON to --report-json.
+      3. Returning exit 0 iff every pass_condition has passed=true.
+
+    The host launcher boots the VM, captures the serial console between
+    `===REPORT_BEGIN===`/`===REPORT_END===` markers, writes that to the
+    test's $SCENARIO_REPORT_PATH (or test-undeclared-outputs if unset),
+    and asserts the report's pass_conditions are all green.
+
+    Args:
+      name: target name; sh_test label.
+      test_binary: a STATICALLY-LINKED go_binary that takes
+        `--scenario=PATH --report-json=PATH --kubeconfig=PATH --namespace=STR`.
+        rules_go produces static binaries by default for cgo-free Go code.
+      scenario: scenario basename (the test binary will be invoked with
+        --scenario=/etc/manifests/<scenario>.yaml). Also baked into the
+        rootfs at /etc/scenario.
+      extra_manifests: {label: basename.yaml} YAMLs applied via
+        `kubectl apply` after k3s is Ready, before the test runs. Useful
+        for installing CRDs and fixture CRs.
+      extra_images: {label: basename.tar} OCI image tarballs preloaded
+        into k3s' embedded containerd (so no external pull is needed).
+      extra_files: {label: dst-abs-path} regular files (0644) layered
+        into the rootfs (e.g. additional Secrets, kubeconfigs, etc.).
+      extra_execs: {label: dst-abs-path} executable files (0755).
+      timeout_seconds: hard cap on VM wall time. K3s cold-start is
+        ~30-60s on this host; budget 300s by default.
+      vcpus: vCPU count. 2 is the minimum for a snappy k3s.
+      mem_mib: guest memory. 2048 MiB covers k3s server + a couple of
+        small test pods comfortably.
+      size_mb: rootfs ext4 size. 2 GiB leaves headroom for k3s' runtime
+        unpack (~150 MiB), pulled/imported images, and emptyDir tmpfs.
+      kernel: firecracker boot kernel.
+      kernel_cmdline: kernel command line.
+      busybox: static busybox label.
+      k3s: static k3s label.
+      init: /sbin/init script label.
+      size: sh_test size attr; `enormous` matches typical k3s cold-start.
+      visibility: target visibility.
+      tags: extra tags. `requires-kvm` and `no-cache` auto-added.
+      **kwargs: forwarded to sh_test.
+    """
+    rootfs_name = "_" + name + "__rootfs"
+    microvm_name = "_" + name + "__microvm"
+    test_src = "_" + name + "__test.sh"
+
+    # Resolve the test_binary label to a basename for /usr/local/bin/.
+    abs = native.package_relative_label(test_binary)
+    test_basename = abs.name
+
+    args = [
+        "--out '$@'",
+        "--busybox '$(execpath {})'".format(busybox),
+        "--k3s '$(execpath {})'".format(k3s),
+        "--init '$(execpath {})'".format(init),
+        "--test-binary '$(execpath {})'".format(test_binary),
+        "--test-binary-name {}".format(_shell_quote(test_basename)),
+        "--scenario {}".format(_shell_quote(scenario)),
+        "--size-mb {}".format(size_mb),
+        "--label k3s",
+    ]
+    srcs = [busybox, k3s, init, test_binary]
+    for label, dst in extra_manifests.items():
+        args.append("--manifest \"$(execpath {})={}\"".format(label, dst))
+        srcs.append(label)
+    for label, dst in extra_images.items():
+        args.append("--image \"$(execpath {})={}\"".format(label, dst))
+        srcs.append(label)
+    for label, dst in extra_files.items():
+        args.append("--file \"$(execpath {})={}\"".format(label, dst))
+        srcs.append(label)
+    for label, dst in extra_execs.items():
+        args.append("--exec \"$(execpath {})={}\"".format(label, dst))
+        srcs.append(label)
+
+    native.genrule(
+        name = rootfs_name,
+        srcs = srcs,
+        outs = [rootfs_name + ".ext4"],
+        cmd = "$(execpath {tool}) {args}".format(
+            tool = _MKK3SROOTFS,
+            args = " ".join(args),
+        ),
+        tools = [_MKK3SROOTFS],
+        local = True,
+        tags = ["manual"],
+    )
+
+    firecracker_microvm(
+        name = microvm_name,
+        kernel = kernel,
+        rootfs = ":" + rootfs_name,
+        kernel_cmdline = kernel_cmdline,
+        vcpus = vcpus,
+        mem_mib = mem_mib,
+        tags = ["manual"],
+    )
+
+    gen_args = [
+        "--out '$@'",
+        "--runner-rloc {}".format(_rlocation_path(":" + microvm_name)),
+        "--timeout {}".format(timeout_seconds),
+    ]
+
+    native.genrule(
+        name = name + "__gen_test",
+        srcs = [":" + microvm_name],
+        outs = [test_src],
+        cmd = "$(execpath {tool}) {args}".format(
+            tool = _GEN_K3S_TEST,
+            args = " ".join(gen_args),
+        ),
+        tools = [_GEN_K3S_TEST],
+        tags = ["manual"],
+    )
+
+    sh_test(
+        name = name,
+        srcs = [test_src],
+        data = [":" + microvm_name],
+        deps = ["@bazel_tools//tools/bash/runfiles"],
+        size = size,
+        visibility = visibility,
+        tags = (tags or []) + ["requires-kvm", "no-cache"],
         **kwargs
     )
