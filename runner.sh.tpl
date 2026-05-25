@@ -30,7 +30,27 @@ BOOT="$(rlocation '@@BOOT_RLOC@@')"
 [[ -n "$BOOT"   && -f "$BOOT"   ]] || { echo "runner: boot artifact not found at @@BOOT_RLOC@@" >&2; exit 1; }
 
 WORK="$(mktemp -d -t fc-microvm.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+# Tests may want to keep $WORK around (e.g. to inspect a written-to
+# extra drive after the VM exits). FC_KEEP_WORK=1 disables the trap;
+# callers are then responsible for cleanup.
+if [[ -z "${FC_KEEP_WORK:-}" ]]; then
+  trap 'rm -rf "$WORK"' EXIT
+else
+  echo "fc-runner: keeping work dir $WORK (FC_KEEP_WORK=1)" >&2
+fi
+
+# Optional extra drive — when @@EXTRA_DRIVE_RLOC@@ is non-empty, the
+# microvm gets a writable virtio-block device backed by a copy of
+# that file. In initrd-boot mode this is the only drive, so it
+# enumerates as /dev/vda inside the guest.
+EXTRA_DRIVE_JSON=""
+if [[ -n "@@EXTRA_DRIVE_RLOC@@" ]]; then
+  EXTRA="$(rlocation '@@EXTRA_DRIVE_RLOC@@')"
+  [[ -n "$EXTRA" && -f "$EXTRA" ]] || { echo "runner: extra drive not found at @@EXTRA_DRIVE_RLOC@@" >&2; exit 1; }
+  cp "$EXTRA" "$WORK/extra.img"
+  chmod 0644 "$WORK/extra.img"
+  EXTRA_DRIVE_JSON='{"drive_id":"extra","path_on_host":"extra.img","is_root_device":false,"is_read_only":false}'
+fi
 
 # Symlink artifacts into a clean working dir; firecracker's path
 # resolver doesn't love runfiles paths with ../external/... in them.
@@ -38,6 +58,11 @@ ln -sf "$KERNEL" "$WORK/vmlinux.bin"
 case "@@BOOT_KIND@@" in
   initrd)
     ln -sf "$BOOT" "$WORK/initrd.cpio.gz"
+    if [[ -n "$EXTRA_DRIVE_JSON" ]]; then
+      DRIVES_ARR="[$EXTRA_DRIVE_JSON]"
+    else
+      DRIVES_ARR="[]"
+    fi
     cat > "$WORK/vm.json" <<JSON
 {
   "boot-source": {
@@ -45,7 +70,7 @@ case "@@BOOT_KIND@@" in
     "initrd_path": "initrd.cpio.gz",
     "boot_args": "@@KERNEL_CMDLINE@@"
   },
-  "drives": [],
+  "drives": $DRIVES_ARR,
   "machine-config": {
     "vcpu_count": @@VCPUS@@,
     "mem_size_mib": @@MEM_MIB@@

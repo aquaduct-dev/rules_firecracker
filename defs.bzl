@@ -179,6 +179,7 @@ def firecracker_microvm(
         kernel,
         initrd = None,
         rootfs = None,
+        extra_drive = None,
         kernel_cmdline = _DEFAULT_CMDLINE,
         vcpus = 1,
         mem_mib = 256,
@@ -192,6 +193,13 @@ def firecracker_microvm(
       kernel: label of an uncompressed kernel ELF.
       initrd: label of a cpio.gz initramfs (mutually exclusive with rootfs).
       rootfs: label of an ext4 disk image (mutually exclusive with initrd).
+      extra_drive: optional label of a disk image to attach as a
+        writable virtio-block device. The runner copies it into
+        $WORK before booting (so the source bazel-bin file stays
+        immutable). In initrd-boot mode it enumerates as /dev/vda
+        inside the guest. Used by §23.10 to hand the installer a
+        blank target disk; set FC_KEEP_WORK=1 at runtime to preserve
+        $WORK so callers can inspect the written-to image afterward.
       kernel_cmdline: boot args passed to the kernel.
       vcpus: vCPU count.
       mem_mib: guest memory in MiB.
@@ -206,15 +214,25 @@ def firecracker_microvm(
     boot_kind = "initrd" if initrd != None else "rootfs"
     runner_src = "_" + name + "__runner.sh"
 
+    srcs = [kernel, boot_label, _RUNNER_TPL]
+    data = [kernel, boot_label]
+    if extra_drive != None:
+        srcs.append(extra_drive)
+        data.append(extra_drive)
+        extra_drive_rloc_expr = "$(rlocationpath {})".format(extra_drive)
+    else:
+        extra_drive_rloc_expr = ""
+
     native.genrule(
         name = name + "__gen_runner",
-        srcs = [kernel, boot_label, _RUNNER_TPL],
+        srcs = srcs,
         outs = [runner_src],
         cmd = (
             "sed " +
             "-e 's|@@KERNEL_RLOC@@|$(rlocationpath {kernel})|g' " +
             "-e 's|@@BOOT_RLOC@@|$(rlocationpath {boot})|g' " +
             "-e 's|@@BOOT_KIND@@|{kind}|g' " +
+            "-e 's|@@EXTRA_DRIVE_RLOC@@|{extra}|g' " +
             "-e 's|@@KERNEL_CMDLINE@@|{cmdline}|g' " +
             "-e 's|@@VCPUS@@|{vcpus}|g' " +
             "-e 's|@@MEM_MIB@@|{mem_mib}|g' " +
@@ -223,6 +241,7 @@ def firecracker_microvm(
             kernel = kernel,
             boot = boot_label,
             kind = boot_kind,
+            extra = extra_drive_rloc_expr,
             cmdline = kernel_cmdline,
             vcpus = vcpus,
             mem_mib = mem_mib,
@@ -234,7 +253,7 @@ def firecracker_microvm(
     sh_binary(
         name = name,
         srcs = [runner_src],
-        data = [kernel, boot_label],
+        data = data,
         deps = ["@bazel_tools//tools/bash/runfiles"],
         visibility = visibility,
         tags = (tags or []) + ["manual"],
