@@ -123,3 +123,36 @@ firecracker_microvm(
     tags = ["manual"],
     visibility = ["//visibility:public"],
 )
+
+# Real multi-node k3s cluster node: a rootfs running k3s server/agent on the
+# real eth0 (role from cmdline). Booted N-up by cluster_run.sh to form an
+# actual cluster over the shared bridge. (CRITERIA "No stub tests".)
+genrule(
+    name = "k3s_cluster_rootfs",
+    srcs = [
+        ":busybox_static",
+        ":k3s_binary",
+        "k3s_cluster_init.sh",
+    ],
+    outs = ["k3s_cluster_rootfs.ext4"],
+    cmd = "$(execpath :mkk3srootfs) --out $@ " +
+          "--busybox $(execpath :busybox_static) --k3s $(execpath :k3s_binary) " +
+          "--init $(execpath k3s_cluster_init.sh) " +
+          "--test-binary $(execpath :busybox_static) --test-binary-name dummytest " +
+          "--scenario cluster --size-mb 2048 --label k3scluster",
+    local = True,
+    tags = ["manual"],
+    tools = [":mkk3srootfs"],
+    visibility = ["//visibility:public"],
+)
+
+firecracker_microvm(
+    name = "k3s_cluster_vm",
+    kernel = ":vmlinux",
+    kernel_cmdline = "console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on init=/sbin/init",
+    mem_mib = 1536,
+    rootfs = ":k3s_cluster_rootfs",
+    tags = ["manual"],
+    vcpus = 2,
+    visibility = ["//visibility:public"],
+)
