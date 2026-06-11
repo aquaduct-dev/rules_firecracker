@@ -102,6 +102,9 @@ sh_binary(
 
 exports_files(
     [
+        "cluster_run.sh",
+        "cluster_test.sh.tpl",
+        "k3s_cluster_init.sh",
         "k3s_init.sh",
         "runner.sh.tpl",
     ],

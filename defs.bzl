@@ -68,6 +68,8 @@ _GEN_TEST = "//tools/firecracker:gen_test"
 _GEN_K3S_TEST = "//tools/firecracker:gen_k3s_test"
 _K3S_INIT = "//tools/firecracker:k3s_init.sh"
 _RUNNER_TPL = "//tools/firecracker:runner.sh.tpl"
+_CLUSTER_RUN = "//tools/firecracker:cluster_run.sh"
+_CLUSTER_TEST_TPL = "//tools/firecracker:cluster_test.sh.tpl"
 
 # `random.trust_cpu=on` lets the kernel seed its RNG from RDRAND so
 # Go's crypto/rand doesn't block ~60s waiting for entropy. Pinned
@@ -561,5 +563,83 @@ def firecracker_k3s_test(
         size = size,
         visibility = visibility,
         tags = (tags or []) + ["requires-kvm", "no-cache"],
+        **kwargs
+    )
+
+def firecracker_cluster_test(
+        name,
+        vm,
+        nodes,
+        expect_marker,
+        leader_idx,
+        subnet_gw = "10.211.55.1/24",
+        timeout_seconds = 360,
+        size = "enormous",
+        visibility = None,
+        tags = None,
+        **kwargs):
+    """Boot N real firecracker microVMs of `vm` on a shared bridge and assert a marker.
+
+    The REAL multi-VM rig the CRITERIA "No stub tests" rule requires: it runs
+    `cluster_run.sh` (host bridge + one user-owned TAP per node) to boot every
+    node, then greps the leader node's serial log for `expect_marker`. Runs as
+    a `local` (unsandboxed) test so it has the host network namespace +
+    passwordless sudo for TAP/bridge setup and /dev/kvm; it SKIPs (exit 0) when
+    either is unavailable.
+
+    Args:
+      vm: a firecracker_microvm label (its rootfs runs the real workload).
+      nodes: list of "IDX,IP,MAC,EXTRA_CMDLINE" spec strings (one per VM).
+      expect_marker: substring that must appear in the leader's log to pass.
+      leader_idx: the IDX whose log carries expect_marker.
+      subnet_gw: bridge gateway IP/CIDR.
+      timeout_seconds: per-VM hard cap (FC_TIMEOUT).
+    """
+    test_src = "_" + name + "__cluster_test.sh"
+    nodes_joined = ";".join(nodes)
+
+    # vm is an sh_binary (multi-output), so rlocationpath won't resolve it.
+    # Compute its runfiles path from the label: main-repo executables live
+    # at _main/<package>/<name> under the runfiles root.
+    vm_label = native.package_relative_label(vm)
+    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+
+    native.genrule(
+        name = name + "__gen",
+        srcs = [_CLUSTER_TEST_TPL, _CLUSTER_RUN],
+        outs = [test_src],
+        cmd = (
+            "sed " +
+            "-e 's|@@RUNNER_RLOC@@|{vm_rloc}|g' " +
+            "-e 's|@@CLUSTER_RUN_RLOC@@|$(rlocationpath {crun})|g' " +
+            "-e 's|@@NODES@@|{nodes}|g' " +
+            "-e 's|@@SUBNET_GW@@|{gw}|g' " +
+            "-e 's|@@TIMEOUT@@|{timeout}|g' " +
+            "-e 's|@@LEADER_IDX@@|{leader}|g' " +
+            "-e 's|@@EXPECT_MARKER@@|{marker}|g' " +
+            "$(execpath {tpl}) > $@ && chmod +x $@"
+        ).format(
+            vm_rloc = vm_rloc,
+            crun = _CLUSTER_RUN,
+            nodes = nodes_joined,
+            gw = subnet_gw,
+            timeout = timeout_seconds,
+            leader = leader_idx,
+            marker = expect_marker,
+            tpl = _CLUSTER_TEST_TPL,
+        ),
+        tools = [],
+        tags = ["manual"],
+    )
+
+    sh_test(
+        name = name,
+        srcs = [test_src],
+        data = [vm, _CLUSTER_RUN],
+        deps = ["@bazel_tools//tools/bash/runfiles"],
+        size = size,
+        visibility = visibility,
+        # local + no-sandbox: needs the host net namespace + sudo for TAP/bridge.
+        tags = (tags or []) + ["requires-kvm", "no-cache", "local", "no-sandbox", "manual"],
         **kwargs
     )
