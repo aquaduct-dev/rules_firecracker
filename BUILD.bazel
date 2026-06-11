@@ -18,6 +18,14 @@
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
+# ---------------------------------------------------------------------------
+# Multi-VM networking self-test (CRITERIA "No stub tests" amendment). Two of
+# these microVMs booted on a shared host bridge ping each other, proving the
+# runner's network-interface support end to end. Driven by the standalone
+# cluster orchestrator (cluster_run.sh) and, once wired, firecracker_cluster_test.
+# ---------------------------------------------------------------------------
+load(":defs.bzl", "firecracker_initramfs", "firecracker_microvm")
+
 genrule(
     name = "vmlinux",
     srcs = [
@@ -97,5 +105,21 @@ exports_files(
         "k3s_init.sh",
         "runner.sh.tpl",
     ],
+    visibility = ["//visibility:public"],
+)
+
+firecracker_initramfs(
+    name = "nettest_initrd",
+    init = "nettest_init.sh",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+firecracker_microvm(
+    name = "nettest_vm",
+    initrd = ":nettest_initrd",
+    kernel = ":vmlinux",
+    mem_mib = 128,
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )

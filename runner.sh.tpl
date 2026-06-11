@@ -52,6 +52,19 @@ if [[ -n "@@EXTRA_DRIVE_RLOC@@" ]]; then
   EXTRA_DRIVE_JSON='{"drive_id":"extra","path_on_host":"extra.img","is_root_device":false,"is_read_only":false}'
 fi
 
+# Optional network interface — the amendment that makes every microVM
+# multi-VM-capable (CRITERIA "No stub tests"). When FC_TAP names a host
+# TAP device (created by the cluster orchestrator and enslaved to a shared
+# bridge), the VM gets a virtio-net NIC on it; the guest IP is set via
+# FC_CMDLINE_EXTRA (`ip=<ip>::<gw>:<mask>::eth0:off`, honored by the
+# kernel's CONFIG_IP_PNP). Empty FC_TAP = no NIC, so single-VM tests are
+# byte-for-byte unchanged.
+NET_FIELD=""
+if [[ -n "${FC_TAP:-}" ]]; then
+  NET_FIELD="\"network-interfaces\": [{\"iface_id\": \"eth0\", \"host_dev_name\": \"${FC_TAP}\", \"guest_mac\": \"${FC_GUEST_MAC:-06:00:AC:10:00:02}\"}],"
+fi
+CMDLINE_EXTRA="${FC_CMDLINE_EXTRA:-}"
+
 # Symlink artifacts into a clean working dir; firecracker's path
 # resolver doesn't love runfiles paths with ../external/... in them.
 ln -sf "$KERNEL" "$WORK/vmlinux.bin"
@@ -68,8 +81,9 @@ case "@@BOOT_KIND@@" in
   "boot-source": {
     "kernel_image_path": "vmlinux.bin",
     "initrd_path": "initrd.cpio.gz",
-    "boot_args": "@@KERNEL_CMDLINE@@"
+    "boot_args": "@@KERNEL_CMDLINE@@ ${CMDLINE_EXTRA}"
   },
+  ${NET_FIELD}
   "drives": $DRIVES_ARR,
   "machine-config": {
     "vcpu_count": @@VCPUS@@,
@@ -87,8 +101,9 @@ JSON
 {
   "boot-source": {
     "kernel_image_path": "vmlinux.bin",
-    "boot_args": "@@KERNEL_CMDLINE@@ root=/dev/vda"
+    "boot_args": "@@KERNEL_CMDLINE@@ root=/dev/vda ${CMDLINE_EXTRA}"
   },
+  ${NET_FIELD}
   "drives": [
     {
       "drive_id": "rootfs",
