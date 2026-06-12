@@ -65,6 +65,19 @@ if [[ -n "${FC_TAP:-}" ]]; then
 fi
 CMDLINE_EXTRA="${FC_CMDLINE_EXTRA:-}"
 
+# Optional persistent data disk (§3 IP-renumber heal needs identity + k3s
+# state to survive a reboot). FC_PERSIST_DISK names a host backing file that
+# is attached as a second virtio-block device (/dev/vdb in rootfs mode) by
+# ABSOLUTE path — NOT copied into $WORK — so writes persist across boots of
+# the same logical node. The orchestrator creates the file once and reuses
+# it for both boots.
+PERSIST_DRIVE_JSON=""
+if [[ -n "${FC_PERSIST_DISK:-}" ]]; then
+  [[ -f "$FC_PERSIST_DISK" ]] || { echo "runner: persist disk not found: $FC_PERSIST_DISK" >&2; exit 1; }
+  PERSIST_ABS="$(cd "$(dirname "$FC_PERSIST_DISK")" && pwd)/$(basename "$FC_PERSIST_DISK")"
+  PERSIST_DRIVE_JSON=",{\"drive_id\": \"persist\", \"path_on_host\": \"${PERSIST_ABS}\", \"is_root_device\": false, \"is_read_only\": false}"
+fi
+
 # Symlink artifacts into a clean working dir; firecracker's path
 # resolver doesn't love runfiles paths with ../external/... in them.
 ln -sf "$KERNEL" "$WORK/vmlinux.bin"
@@ -110,7 +123,7 @@ JSON
       "path_on_host": "rootfs.ext4",
       "is_root_device": true,
       "is_read_only": false
-    }
+    }${PERSIST_DRIVE_JSON}
   ],
   "machine-config": {
     "vcpu_count": @@VCPUS@@,

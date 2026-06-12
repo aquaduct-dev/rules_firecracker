@@ -22,19 +22,24 @@
 # and tears down every TAP + the bridge on exit.
 set -uo pipefail
 
-RUNNER="" BRIDGE="ofdbr0" GW="10.211.55.1/24" TIMEOUT="120" LOGDIR=""
+RUNNER="" BRIDGE="ofdbr0" GW="10.211.55.1/24" TIMEOUT="120" LOGDIR="" PERSIST_DIR=""
 NODES=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --runner)    RUNNER="$2"; shift 2 ;;
-    --bridge)    BRIDGE="$2"; shift 2 ;;
-    --subnet-gw) GW="$2"; shift 2 ;;
-    --timeout)   TIMEOUT="$2"; shift 2 ;;
-    --logdir)    LOGDIR="$2"; shift 2 ;;
-    --node)      NODES+=("$2"); shift 2 ;;
+    --runner)      RUNNER="$2"; shift 2 ;;
+    --bridge)      BRIDGE="$2"; shift 2 ;;
+    --subnet-gw)   GW="$2"; shift 2 ;;
+    --timeout)     TIMEOUT="$2"; shift 2 ;;
+    --logdir)      LOGDIR="$2"; shift 2 ;;
+    --node)        NODES+=("$2"); shift 2 ;;
+    # --persist-dir DIR: give each node a persistent /dev/vdb data disk at
+    # DIR/persist-<IDX>.img (created + mkfs.ext4'd once, reused across boots
+    # so identity + k3s state survive an IP renumber — §3).
+    --persist-dir) PERSIST_DIR="$2"; shift 2 ;;
     *) echo "cluster_run: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+[ -n "$PERSIST_DIR" ] && mkdir -p "$PERSIST_DIR"
 [ -n "$RUNNER" ] || { echo "cluster_run: --runner required" >&2; exit 2; }
 [ -n "$LOGDIR" ] || LOGDIR="$(mktemp -d -t fc-cluster.XXXXXX)"
 mkdir -p "$LOGDIR"
@@ -69,7 +74,18 @@ EOF
   sudo -n ip tuntap add dev "$TAP" mode tap user "$USER"
   sudo -n ip link set "$TAP" master "$BRIDGE"
   sudo -n ip link set "$TAP" up
-  FC_TAP="$TAP" FC_GUEST_MAC="$MAC" \
+
+  PERSIST_ENV=()
+  if [ -n "$PERSIST_DIR" ]; then
+    DISK="$PERSIST_DIR/persist-${IDX}.img"
+    if [ ! -f "$DISK" ]; then
+      truncate -s 2G "$DISK"
+      mkfs.ext4 -q -F "$DISK" >/dev/null 2>&1 || echo "cluster_run: mkfs $DISK failed" >&2
+    fi
+    PERSIST_ENV=("FC_PERSIST_DISK=$DISK")
+  fi
+
+  env "${PERSIST_ENV[@]}" FC_TAP="$TAP" FC_GUEST_MAC="$MAC" \
     FC_CMDLINE_EXTRA="ip=${IP}::${GW_IP}:${MASK}::eth0:off ${EXTRA}" \
     FC_TIMEOUT="$TIMEOUT" "$RUNNER" >"$LOGDIR/vm${IDX}.log" 2>&1 &
   PIDS+=("$!")
