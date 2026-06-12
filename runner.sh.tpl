@@ -81,6 +81,40 @@ fi
 # Symlink artifacts into a clean working dir; firecracker's path
 # resolver doesn't love runfiles paths with ../external/... in them.
 ln -sf "$KERNEL" "$WORK/vmlinux.bin"
+
+# FC_BOOT_DISK overrides the baked initrd/rootfs: boot directly from a
+# pre-partitioned disk (an installed system, §28) by absolute path, with
+# root pointed at FC_ROOT_PART (default /dev/vda2, the OFD_ROOTFS partition).
+# The kernel needs CONFIG_EFI_PARTITION=y to read the disk's GPT.
+if [[ -n "${FC_BOOT_DISK:-}" ]]; then
+  [[ -f "$FC_BOOT_DISK" ]] || { echo "runner: boot disk not found: $FC_BOOT_DISK" >&2; exit 1; }
+  BOOT_ABS="$(cd "$(dirname "$FC_BOOT_DISK")" && pwd)/$(basename "$FC_BOOT_DISK")"
+  ROOT_PART="${FC_ROOT_PART:-/dev/vda2}"
+  cat > "$WORK/vm.json" <<JSON
+{
+  "boot-source": {
+    "kernel_image_path": "vmlinux.bin",
+    "boot_args": "@@KERNEL_CMDLINE@@ root=${ROOT_PART} ${CMDLINE_EXTRA}"
+  },
+  ${NET_FIELD}
+  "drives": [
+    {"drive_id": "boot", "path_on_host": "${BOOT_ABS}", "is_root_device": true, "is_read_only": false}
+  ],
+  "machine-config": {"vcpu_count": @@VCPUS@@, "mem_size_mib": @@MEM_MIB@@}
+}
+JSON
+  cd "$WORK"
+  if [[ -n "${FC_TIMEOUT:-}" ]]; then
+    set +e
+    timeout --foreground -s KILL "${FC_TIMEOUT}" firecracker --no-api --config-file vm.json
+    rc=$?
+    set -e
+    [[ $rc -eq 124 || $rc -eq 137 ]] && exit 0
+    exit $rc
+  fi
+  exec firecracker --no-api --config-file vm.json
+fi
+
 case "@@BOOT_KIND@@" in
   initrd)
     ln -sf "$BOOT" "$WORK/initrd.cpio.gz"
