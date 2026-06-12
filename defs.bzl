@@ -71,6 +71,7 @@ _RUNNER_TPL = "//tools/firecracker:runner.sh.tpl"
 _CLUSTER_RUN = "//tools/firecracker:cluster_run.sh"
 _CLUSTER_TEST_TPL = "//tools/firecracker:cluster_test.sh.tpl"
 _RENUMBER_TEST_TPL = "//tools/firecracker:cluster_renumber_test.sh.tpl"
+_INSTALL_TEST_TPL = "//tools/firecracker:cluster_install_test.sh.tpl"
 
 # `random.trust_cpu=on` lets the kernel seed its RNG from RDRAND so
 # Go's crypto/rand doesn't block ~60s waiting for entropy. Pinned
@@ -704,6 +705,72 @@ def firecracker_renumber_test(
         name = name,
         srcs = [test_src],
         data = [vm, _CLUSTER_RUN],
+        deps = ["@bazel_tools//tools/bash/runfiles"],
+        size = size,
+        visibility = visibility,
+        tags = (tags or []) + ["requires-kvm", "no-cache", "local", "no-sandbox", "manual"],
+        **kwargs
+    )
+
+def firecracker_install_cluster_test(
+        name,
+        vm,
+        installer,
+        rootfs,
+        nodes,
+        expect_marker,
+        gw = "10.211.55.1/24",
+        secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        timeout_seconds = 360,
+        size = "enormous",
+        visibility = None,
+        tags = None,
+        **kwargs):
+    """Real §28 rig: install each node to a GPT disk via the REAL installer,
+    then boot every node from its installed disk (no media) and assert a
+    cluster forms. `installer` is the openfactoryd-installer binary label;
+    `rootfs` is the bootable cluster rootfs ext4 image label."""
+    test_src = "_" + name + "__install_test.sh"
+    vm_label = native.package_relative_label(vm)
+    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+    inst_label = native.package_relative_label(installer)
+    inst_rloc = "_main/" + inst_label.package + "/" + inst_label.name + "_/" + inst_label.name
+    idxs = " ".join([spec.split(",")[0] for spec in nodes])
+
+    native.genrule(
+        name = name + "__gen",
+        srcs = [_INSTALL_TEST_TPL, _CLUSTER_RUN, rootfs],
+        outs = [test_src],
+        cmd = (
+            "sed " +
+            "-e 's|@@RUNNER_RLOC@@|{vm_rloc}|g' " +
+            "-e 's|@@INSTALLER_RLOC@@|{inst_rloc}|g' " +
+            "-e 's|@@CLUSTER_RUN_RLOC@@|$(rlocationpath {crun})|g' " +
+            "-e 's|@@ROOTFS_RLOC@@|$(rlocationpath {rootfs})|g' " +
+            "-e 's|@@NODES@@|{nodes}|g' -e 's|@@IDXS@@|{idxs}|g' " +
+            "-e 's|@@GW@@|{gw}|g' -e 's|@@TIMEOUT@@|{tmo}|g' " +
+            "-e 's|@@SECRET@@|{secret}|g' -e 's|@@EXPECT_MARKER@@|{marker}|g' " +
+            "$(execpath {tpl}) > $@ && chmod +x $@"
+        ).format(
+            vm_rloc = vm_rloc,
+            inst_rloc = inst_rloc,
+            crun = _CLUSTER_RUN,
+            rootfs = rootfs,
+            nodes = ";".join(nodes),
+            idxs = idxs,
+            gw = gw,
+            tmo = timeout_seconds,
+            secret = secret,
+            marker = expect_marker,
+            tpl = _INSTALL_TEST_TPL,
+        ),
+        tags = ["manual"],
+    )
+
+    sh_test(
+        name = name,
+        srcs = [test_src],
+        data = [vm, installer, rootfs, _CLUSTER_RUN],
         deps = ["@bazel_tools//tools/bash/runfiles"],
         size = size,
         visibility = visibility,

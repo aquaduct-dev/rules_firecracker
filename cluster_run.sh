@@ -22,7 +22,7 @@
 # and tears down every TAP + the bridge on exit.
 set -uo pipefail
 
-RUNNER="" BRIDGE="ofdbr0" GW="10.211.55.1/24" TIMEOUT="120" LOGDIR="" PERSIST_DIR=""
+RUNNER="" BRIDGE="ofdbr0" GW="10.211.55.1/24" TIMEOUT="120" LOGDIR="" PERSIST_DIR="" BOOT_DISK_DIR=""
 NODES=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,6 +36,10 @@ while [ $# -gt 0 ]; do
     # DIR/persist-<IDX>.img (created + mkfs.ext4'd once, reused across boots
     # so identity + k3s state survive an IP renumber — §3).
     --persist-dir) PERSIST_DIR="$2"; shift 2 ;;
+    # --boot-disk-dir DIR: boot each node from a pre-installed GPT disk at
+    # DIR/installed-<IDX>.img (root=/dev/vda2) instead of the runner's baked
+    # rootfs — the §28 install-to-disk path.
+    --boot-disk-dir) BOOT_DISK_DIR="$2"; shift 2 ;;
     *) echo "cluster_run: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -83,6 +87,9 @@ EOF
       mkfs.ext4 -q -F "$DISK" >/dev/null 2>&1 || echo "cluster_run: mkfs $DISK failed" >&2
     fi
     PERSIST_ENV=("FC_PERSIST_DISK=$DISK")
+  fi
+  if [ -n "$BOOT_DISK_DIR" ]; then
+    PERSIST_ENV+=("FC_BOOT_DISK=$BOOT_DISK_DIR/installed-${IDX}.img" "FC_ROOT_PART=/dev/vda2")
   fi
 
   env "${PERSIST_ENV[@]}" FC_TAP="$TAP" FC_GUEST_MAC="$MAC" \

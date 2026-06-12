@@ -98,7 +98,7 @@ if [[ -n "${FC_BOOT_DISK:-}" ]]; then
   },
   ${NET_FIELD}
   "drives": [
-    {"drive_id": "boot", "path_on_host": "${BOOT_ABS}", "is_root_device": true, "is_read_only": false}
+    {"drive_id": "boot", "path_on_host": "${BOOT_ABS}", "is_root_device": false, "is_read_only": false}
   ],
   "machine-config": {"vcpu_count": @@VCPUS@@, "mem_size_mib": @@MEM_MIB@@}
 }
