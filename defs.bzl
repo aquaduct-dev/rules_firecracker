@@ -70,6 +70,7 @@ _K3S_INIT = "//tools/firecracker:k3s_init.sh"
 _RUNNER_TPL = "//tools/firecracker:runner.sh.tpl"
 _CLUSTER_RUN = "//tools/firecracker:cluster_run.sh"
 _CLUSTER_TEST_TPL = "//tools/firecracker:cluster_test.sh.tpl"
+_RENUMBER_TEST_TPL = "//tools/firecracker:cluster_renumber_test.sh.tpl"
 
 # `random.trust_cpu=on` lets the kernel seed its RNG from RDRAND so
 # Go's crypto/rand doesn't block ~60s waiting for entropy. Pinned
@@ -640,6 +641,72 @@ def firecracker_cluster_test(
         size = size,
         visibility = visibility,
         # local + no-sandbox: needs the host net namespace + sudo for TAP/bridge.
+        tags = (tags or []) + ["requires-kvm", "no-cache", "local", "no-sandbox", "manual"],
+        **kwargs
+    )
+
+def firecracker_renumber_test(
+        name,
+        vm,
+        nodes1,
+        nodes2,
+        gw1,
+        gw2,
+        expect_marker,
+        timeout1 = 240,
+        timeout2 = 300,
+        size = "enormous",
+        visibility = None,
+        tags = None,
+        **kwargs):
+    """Two-phase real multi-VM rig for CRITERIA §3/§4b (IP-renumber heal).
+
+    Boots `vm` nodes on gw1's subnet (they form a cluster + persist identity
+    via --persist-dir, then power off), then reboots the SAME nodes (same
+    persistent disks) on gw2's subnet and asserts `expect_marker` (e.g.
+    OFD_HEAL_OK) appears in a phase-2 serial log. nodes1/nodes2 are the
+    per-phase "IDX,IP,MAC,EXTRA" spec lists (same MACs + IDX, different IPs).
+    """
+    test_src = "_" + name + "__renumber_test.sh"
+    vm_label = native.package_relative_label(vm)
+    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+
+    native.genrule(
+        name = name + "__gen",
+        srcs = [_RENUMBER_TEST_TPL, _CLUSTER_RUN],
+        outs = [test_src],
+        cmd = (
+            "sed " +
+            "-e 's|@@RUNNER_RLOC@@|{vm_rloc}|g' " +
+            "-e 's|@@CLUSTER_RUN_RLOC@@|$(rlocationpath {crun})|g' " +
+            "-e 's|@@NODES1@@|{nodes1}|g' " +
+            "-e 's|@@NODES2@@|{nodes2}|g' " +
+            "-e 's|@@GW1@@|{gw1}|g' -e 's|@@GW2@@|{gw2}|g' " +
+            "-e 's|@@TIMEOUT1@@|{t1}|g' -e 's|@@TIMEOUT2@@|{t2}|g' " +
+            "-e 's|@@EXPECT_MARKER@@|{marker}|g' " +
+            "$(execpath {tpl}) > $@ && chmod +x $@"
+        ).format(
+            vm_rloc = vm_rloc,
+            crun = _CLUSTER_RUN,
+            nodes1 = ";".join(nodes1),
+            nodes2 = ";".join(nodes2),
+            gw1 = gw1,
+            gw2 = gw2,
+            t1 = timeout1,
+            t2 = timeout2,
+            marker = expect_marker,
+            tpl = _RENUMBER_TEST_TPL,
+        ),
+        tags = ["manual"],
+    )
+
+    sh_test(
+        name = name,
+        srcs = [test_src],
+        data = [vm, _CLUSTER_RUN],
+        deps = ["@bazel_tools//tools/bash/runfiles"],
+        size = size,
+        visibility = visibility,
         tags = (tags or []) + ["requires-kvm", "no-cache", "local", "no-sandbox", "manual"],
         **kwargs
     )
