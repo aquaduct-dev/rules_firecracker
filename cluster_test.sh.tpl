@@ -39,14 +39,18 @@ bash "$CLUSTER_RUN" --runner "$RUNNER" --bridge "$BRIDGE" \
   --subnet-gw '@@SUBNET_GW@@' --timeout '@@TIMEOUT@@' --logdir "$LOG" \
   "${NODE_ARGS[@]}" >"$LOG/orch.log" 2>&1 || true
 
-LEADER_LOG="$LOG/vm@@LEADER_IDX@@.log"
-echo "=== leader (vm@@LEADER_IDX@@) tail ===" >&2
-tail -n 25 "$LEADER_LOG" 2>/dev/null >&2 || true
+# The cluster leader is non-deterministic (UUID-derived mesh IP, random per
+# boot), so the success marker may land in ANY server node's log — grep them
+# all. @@LEADER_IDX@@ is just the node whose tail we show for diagnostics.
+echo "=== node vm@@LEADER_IDX@@ tail ===" >&2
+tail -n 25 "$LOG/vm@@LEADER_IDX@@.log" 2>/dev/null >&2 || true
 
-if grep -qF '@@EXPECT_MARKER@@' "$LEADER_LOG" 2>/dev/null; then
+if grep -qhF '@@EXPECT_MARKER@@' "$LOG"/vm*.log 2>/dev/null; then
   echo "cluster-test: PASS — found '@@EXPECT_MARKER@@'" >&2
   rm -rf "$LOG"
   exit 0
 fi
-echo "cluster-test: FAIL — '@@EXPECT_MARKER@@' not seen in $LEADER_LOG" >&2
+echo "cluster-test: FAIL — '@@EXPECT_MARKER@@' not seen in any node log" >&2
+echo "=== all node markers ===" >&2
+grep -hE 'OFD_|K3SC_|CLUSTER_' "$LOG"/vm*.log 2>/dev/null >&2 || true
 exit 1
