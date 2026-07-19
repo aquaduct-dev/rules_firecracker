@@ -94,6 +94,14 @@ sh_binary(
     visibility = ["//visibility:public"],
 )
 
+# Builds a REAL Debian+systemd ext4 rootfs (systemd PID 1) where openfactoryd owns
+# k3s via systemctl — the counterpart of mkk3srootfs for the systemd-managed rigs.
+sh_binary(
+    name = "mksystemdrootfs",
+    srcs = ["mksystemdrootfs.sh"],
+    visibility = ["//visibility:public"],
+)
+
 sh_binary(
     name = "gen_k3s_test",
     srcs = ["gen_k3s_test.sh"],
