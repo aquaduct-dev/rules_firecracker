@@ -102,6 +102,25 @@ sh_binary(
     visibility = ["//visibility:public"],
 )
 
+# Builds the PRODUCTION Debian+systemd node rootfs that a real openfactoryd node
+# boots after install-to-disk (openfactoryd.service owns k3s; DHCP networking;
+# settings read from the rootfs). Counterpart of mksystemdrootfs for real hardware.
+sh_binary(
+    name = "mknoderootfs",
+    srcs = ["mknoderootfs.sh"],
+    visibility = ["//visibility:public"],
+)
+
+# Builds the SELF-CONTAINED conventional node image: a real Debian system with
+# its OWN kernel + linux-firmware + NetworkManager + k3s + openfactoryd. The
+# installer dd's it and GRUB boots its own kernel (root=LABEL=OFD_ROOTFS) — no
+# build-host kernel, no fat-initrd switch_root, no per-capability injection.
+sh_binary(
+    name = "mknodeimage",
+    srcs = ["mknodeimage.sh"],
+    visibility = ["//visibility:public"],
+)
+
 sh_binary(
     name = "gen_k3s_test",
     srcs = ["gen_k3s_test.sh"],
