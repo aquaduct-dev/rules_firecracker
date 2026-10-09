@@ -1,0 +1,12 @@
+# Firecracker microVM tests need /dev/kvm visible inside the sandbox.
+# Tests are tagged `requires-kvm` so callers can opt out on KVM-less
+# hosts via `--test_tag_filters=-requires-kvm`. The invoking user must be
+# in the `kvm` group (uid/gid mapping is identity inside the sandbox).
+# Consumers copy these lines into their own .bazelrc.
+build:kvm --sandbox_add_mount_pair=/dev/kvm
+test:kvm --sandbox_add_mount_pair=/dev/kvm
+test:kvm --test_env=HOME
+# Pass the host's PATH through so firecracker_test can find the
+# `firecracker` binary (typically installed under ~/.local/bin or
+# /usr/local/bin — non-hermetic for now).
+test:kvm --test_env=PATH

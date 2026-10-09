@@ -2,14 +2,14 @@
 #
 # `vmlinux`        — the firecracker boot kernel (Linux 6.1.155), built
 #                    locally from the kernel.org source tarball pinned in
-#                    //MODULE.bazel against `vmlinux-6.1.config` (upstream
+#                    MODULE.bazel against `vmlinux-6.1.config` (upstream
 #                    firecracker config + CONFIG_FUSE_FS=y). The build runs
 #                    out-of-sandbox (`local = True`) and uses the host
 #                    toolchain: gcc, make, bc, flex, bison, libelf-dev,
 #                    libssl-dev. ~5-10 min cold; bazel caches by
 #                    (tarball sha + config content) afterwards.
 # `busybox_static` — busybox 1.35.0 x86_64-musl from busybox.net, pinned by
-#                    sha256 in //MODULE.bazel. The chmod-+x wrapper genrule
+#                    sha256 in MODULE.bazel. The chmod-+x wrapper genrule
 #                    is needed because http_file doesn't preserve the upstream
 #                    file mode (busybox.net serves the binary at 0664).
 # `mkinitramfs`    — sh_binary tool consumed by firecracker_initramfs.

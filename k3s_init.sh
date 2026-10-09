@@ -77,7 +77,7 @@ ip route 2>/dev/null > /dev/console || true
 
 # Random entropy. Without random.trust_cpu the apiserver's TLS cert
 # generation can stall for ~60s. Pass it as a kernel cmdline arg (set
-# by tools/firecracker:defs.bzl's _DEFAULT_CMDLINE).
+# by defs.bzl's _DEFAULT_CMDLINE).
 [ -e /dev/random ] && [ -e /dev/urandom ] || log "warning: no /dev/random"
 
 marker "K3S_BOOTING"

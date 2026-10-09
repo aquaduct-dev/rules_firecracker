@@ -1,0 +1,53 @@
+module(
+    name = "rules_firecracker",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+# Only the k3s_smoke self-test is written in Go.
+bazel_dep(name = "rules_go", version = "0.60.0", dev_dependency = True)
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(version = "1.25.4")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+# Firecracker boot kernel source. Linux 6.1.155 from kernel.org, built
+# locally by //:vmlinux against //:vmlinux-6.1.config (the upstream
+# firecracker microvm-kernel-ci-x86_64-6.1.config, which enables
+# CONFIG_FUSE_FS=y). The prebuilt vmlinux on firecracker's CI bucket is
+# missing FUSE, so we build from source. The pinned config also has
+# CONFIG_RANDOM_TRUST_CPU=y so Go's crypto/rand doesn't block ~60s waiting
+# for entropy. To upgrade: fetch new tarball, sha256sum it, bump version +
+# sha below; refresh the .config from firecracker upstream if guest
+# features change.
+http_file(
+    name = "firecracker_kernel_src",
+    downloaded_file_path = "linux.tar.xz",
+    sha256 = "c29387aeee085fbcbd91236224b9df805063bac43615e75cea2c6b29604a5c73",
+    urls = ["https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.1.155.tar.xz"],
+)
+
+# Statically-linked busybox for the firecracker initramfs. Pinned by sha256
+# so //:busybox_static is hermetic. Upstream serves the file without the
+# executable bit; BUILD.bazel wraps it in a chmod-+x genrule before
+# consumers see it.
+http_file(
+    name = "busybox_static_x86_64",
+    downloaded_file_path = "busybox",
+    sha256 = "6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348",
+    urls = ["https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox"],
+)
+
+# Statically-linked k3s binary (single fat ELF that embeds containerd,
+# kubelet, kube-apiserver, runc, flannel, coredns, etc.). Used by
+# firecracker_k3s_test to bake a real k3s onto the microVM rootfs — k3s
+# runs as PID 1 inside the guest, no nested container runtime involved.
+# Upgrades: fetch the new release, sha256sum, bump tag + sha together.
+http_file(
+    name = "k3s_binary_x86_64",
+    downloaded_file_path = "k3s",
+    sha256 = "fb942b7870d9a88e10d063e9f52b99fa538becca761e2578887e04e5ce167e53",
+    urls = ["https://github.com/k3s-io/k3s/releases/download/v1.30.4+k3s1/k3s"],
+)

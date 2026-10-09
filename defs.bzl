@@ -24,7 +24,7 @@ Public API:
       tees serial-console output, then asserts every `expect_markers`
       string is present and every `unexpected_markers` string is absent.
       Tagged `requires-kvm` and `no-cache`. Run with `--config=kvm`
-      (defined in //.bazelrc) to bind-mount /dev/kvm into the sandbox.
+      (see this repo's .bazelrc) to bind-mount /dev/kvm into the sandbox.
       The VM is killed as soon as every expect_marker has appeared, so
       typical tests finish in a few seconds regardless of timeout_seconds.
 
@@ -57,21 +57,21 @@ Public API:
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
-_DEFAULT_BUSYBOX = "//tools/firecracker:busybox_static"
-_DEFAULT_KERNEL = "//tools/firecracker:vmlinux"
-_DEFAULT_K3S = "//tools/firecracker:k3s_binary"
-_MKINITRAMFS = "//tools/firecracker:mkinitramfs"
-_MKROOTFS = "//tools/firecracker:mkrootfs"
-_MKCONTAINERFS = "//tools/firecracker:mkcontainerfs"
-_MKK3SROOTFS = "//tools/firecracker:mkk3srootfs"
-_GEN_TEST = "//tools/firecracker:gen_test"
-_GEN_K3S_TEST = "//tools/firecracker:gen_k3s_test"
-_K3S_INIT = "//tools/firecracker:k3s_init.sh"
-_RUNNER_TPL = "//tools/firecracker:runner.sh.tpl"
-_CLUSTER_RUN = "//tools/firecracker:cluster_run.sh"
-_CLUSTER_TEST_TPL = "//tools/firecracker:cluster_test.sh.tpl"
-_RENUMBER_TEST_TPL = "//tools/firecracker:cluster_renumber_test.sh.tpl"
-_INSTALL_TEST_TPL = "//tools/firecracker:cluster_install_test.sh.tpl"
+_DEFAULT_BUSYBOX = str(Label("//:busybox_static"))
+_DEFAULT_KERNEL = str(Label("//:vmlinux"))
+_DEFAULT_K3S = str(Label("//:k3s_binary"))
+_MKINITRAMFS = str(Label("//:mkinitramfs"))
+_MKROOTFS = str(Label("//:mkrootfs"))
+_MKCONTAINERFS = str(Label("//:mkcontainerfs"))
+_MKK3SROOTFS = str(Label("//:mkk3srootfs"))
+_GEN_TEST = str(Label("//:gen_test"))
+_GEN_K3S_TEST = str(Label("//:gen_k3s_test"))
+_K3S_INIT = str(Label("//:k3s_init.sh"))
+_RUNNER_TPL = str(Label("//:runner.sh.tpl"))
+_CLUSTER_RUN = str(Label("//:cluster_run.sh"))
+_CLUSTER_TEST_TPL = str(Label("//:cluster_test.sh.tpl"))
+_RENUMBER_TEST_TPL = str(Label("//:cluster_renumber_test.sh.tpl"))
+_INSTALL_TEST_TPL = str(Label("//:cluster_install_test.sh.tpl"))
 
 # `random.trust_cpu=on` lets the kernel seed its RNG from RDRAND so
 # Go's crypto/rand doesn't block ~60s waiting for entropy. Pinned
@@ -83,15 +83,17 @@ def _shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 def _rlocation_path(label):
-    # rlocation paths under bzlmod for the root module are _main/<pkg>/<name>.
-    # Used to address a sh_binary's launcher script from a sibling sh_test —
-    # $(rlocationpath label) would expand to multiple files (the runner script
-    # plus the binary itself), so we compute it ourselves at macro-expansion
-    # time. Verified by inspecting smoke_vm.runfiles/.
+    # rlocation paths under bzlmod are <canonical repo>/<pkg>/<name>, where the
+    # root module's repo is `_main`. Used to address a sh_binary's launcher
+    # script from a sibling sh_test — $(rlocationpath label) would expand to
+    # multiple files (the runner script plus the binary itself), so we compute
+    # it ourselves at macro-expansion time. Verified by inspecting
+    # smoke_vm.runfiles/.
     abs = native.package_relative_label(label)
+    repo = abs.repo_name or "_main"
     if abs.package:
-        return "_main/{}/{}".format(abs.package, abs.name)
-    return "_main/{}".format(abs.name)
+        return "{}/{}/{}".format(repo, abs.package, abs.name)
+    return "{}/{}".format(repo, abs.name)
 
 def firecracker_initramfs(
         name,
@@ -602,9 +604,8 @@ def firecracker_cluster_test(
 
     # vm is an sh_binary (multi-output), so rlocationpath won't resolve it.
     # Compute its runfiles path from the label: main-repo executables live
-    # at _main/<package>/<name> under the runfiles root.
-    vm_label = native.package_relative_label(vm)
-    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+    # at <repo>/<package>/<name> under the runfiles root.
+    vm_rloc = _rlocation_path(vm)
 
     native.genrule(
         name = name + "__gen",
@@ -669,8 +670,7 @@ def firecracker_renumber_test(
     per-phase "IDX,IP,MAC,EXTRA" spec lists (same MACs + IDX, different IPs).
     """
     test_src = "_" + name + "__renumber_test.sh"
-    vm_label = native.package_relative_label(vm)
-    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+    vm_rloc = _rlocation_path(vm)
 
     native.genrule(
         name = name + "__gen",
@@ -731,10 +731,9 @@ def firecracker_install_cluster_test(
     cluster forms. `installer` is the openfactoryd-installer binary label;
     `rootfs` is the bootable cluster rootfs ext4 image label."""
     test_src = "_" + name + "__install_test.sh"
-    vm_label = native.package_relative_label(vm)
-    vm_rloc = "_main/" + vm_label.package + "/" + vm_label.name
+    vm_rloc = _rlocation_path(vm)
     inst_label = native.package_relative_label(installer)
-    inst_rloc = "_main/" + inst_label.package + "/" + inst_label.name + "_/" + inst_label.name
+    inst_rloc = _rlocation_path(installer) + "_/" + inst_label.name
     idxs = " ".join([spec.split(",")[0] for spec in nodes])
 
     native.genrule(
