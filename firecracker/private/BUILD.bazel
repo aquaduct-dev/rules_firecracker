@@ -1,0 +1,24 @@
+# Implementation details of rules_firecracker. Nothing here is public API:
+# the files are visible to every package only because the macros in
+# //firecracker:defs.bzl instantiate genrules in the CALLER's package that
+# read them.
+
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+
+exports_files(
+    glob([
+        "*.sh",
+        "*.tpl",
+        "*.config",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+bzl_library(
+    name = "macros",
+    srcs = ["macros.bzl"],
+    visibility = ["//firecracker:__pkg__"],
+    deps = [
+        "@rules_shell//shell:rules_bzl",
+    ],
+)

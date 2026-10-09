@@ -1,0 +1,71 @@
+# firecracker_container: boot a tiny two-layer OCI image built with rules_oci.
+
+load("@rules_oci//oci:defs.bzl", "oci_image")
+load("//firecracker:defs.bzl", "firecracker_container", "firecracker_test")
+
+# Layer 1: the entrypoint script plus a file layer 2 deletes.
+genrule(
+    name = "layer1",
+    srcs = ["run.sh"],
+    outs = ["layer1.tar"],
+    cmd = """
+        d=$$(mktemp -d) && mkdir -p $$d/app &&
+        cp $(execpath run.sh) $$d/app/run.sh && echo gone > $$d/app/removed.txt &&
+        tar --sort=name --owner=0 --group=0 --mtime=@0 -C $$d -cf $@ app && rm -rf $$d
+    """,
+)
+
+# Layer 2: an AUFS whiteout for app/removed.txt and a new file.
+genrule(
+    name = "layer2",
+    outs = ["layer2.tar"],
+    cmd = """
+        d=$$(mktemp -d) && mkdir -p $$d/app &&
+        : > $$d/app/.wh.removed.txt && echo from-layer-2 > $$d/app/layer2.txt &&
+        tar --sort=name --owner=0 --group=0 --mtime=@0 -C $$d -cf $@ app && rm -rf $$d
+    """,
+)
+
+oci_image(
+    name = "image",
+    architecture = "amd64",
+    cmd = ["from-cmd"],
+    entrypoint = [
+        "/sbin/busybox",
+        "sh",
+        "/app/run.sh",
+    ],
+    env = {"GREETING": "hello-from-image-env"},
+    os = "linux",
+    tars = [
+        ":layer1",
+        ":layer2",
+    ],
+    workdir = "/app",
+)
+
+firecracker_container(
+    name = "container_vm",
+    extra_args = ["extra arg"],
+    extra_env = {"EXTRA_ENV": "set-by-macro"},
+    image = ":image",
+    mem_mib = 128,
+    size_mb = 32,
+)
+
+firecracker_test(
+    name = "container_test",
+    expect_markers = [
+        "FIRECRACKER_CONTAINER_READY",
+        "CWD=/app",
+        "GREETING=hello-from-image-env",
+        "EXTRA_ENV=set-by-macro",
+        "ARGC=2 ARGS=from-cmd extra arg",
+        "WHITEOUT_APPLIED",
+        "LAYER2=from-layer-2",
+        # The image's exit code is reported, then the VM exits by itself.
+        "FIRECRACKER_CONTAINER_EXIT=7",
+    ],
+    microvm = ":container_vm",
+    unexpected_markers = ["WHITEOUT_IGNORED"],
+)

@@ -1,0 +1,8 @@
+# Scenario file: its presence at /etc/manifests/k3s_extras.yaml is checked by
+# the guest test; applying it is a no-op ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fc-scenario
+  namespace: default
+data: {}

@@ -1,0 +1,37 @@
+load(
+    "@rules_firecracker//firecracker:defs.bzl",
+    "firecracker_initramfs",
+    "firecracker_microvm",
+    "firecracker_test",
+)
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+firecracker_initramfs(
+    name = "initrd",
+    init = "init.sh",
+)
+
+# kernel and firecracker default to @rules_firecracker//firecracker:vmlinux
+# and :firecracker, resolved from this (non-root) caller's package.
+firecracker_microvm(
+    name = "vm",
+    initrd = ":initrd",
+    mem_mib = 128,
+    vcpus = 2,
+)
+
+firecracker_test(
+    name = "boot_test",
+    expect_markers = ["E2E_SMOKE_OK nproc=2"],
+    microvm = ":vm",
+)
+
+# Runs without KVM (the BCR presubmit has none): the pinned firecracker is
+# reachable through runfiles from an external caller.
+sh_test(
+    name = "firecracker_version_test",
+    srcs = ["firecracker_version_test.sh"],
+    data = ["@rules_firecracker//firecracker:firecracker"],
+    env = {"FC_RLOC": "$(rlocationpath @rules_firecracker//firecracker:firecracker)"},
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)

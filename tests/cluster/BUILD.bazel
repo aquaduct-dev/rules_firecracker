@@ -1,0 +1,175 @@
+# Multi-VM tests: several microVMs on a host bridge (sudo + /dev/kvm).
+# These macros always tag their tests `manual` + `local`, so `bazel test //...`
+# skips them; run them through the :cluster suite (CI does, with
+# --config=ci so a missing prerequisite fails instead of SKIPping).
+# Every test uses its own subnet so they can run concurrently.
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load(
+    "//firecracker:defs.bzl",
+    "DEFAULT_KERNEL_CMDLINE",
+    "firecracker_cluster_test",
+    "firecracker_initramfs",
+    "firecracker_install_cluster_test",
+    "firecracker_microvm",
+    "firecracker_renumber_test",
+    "firecracker_rootfs",
+)
+
+# `manual` keeps `//...` from expanding this suite; name it explicitly.
+test_suite(
+    name = "cluster",
+    tags = ["manual"],
+    tests = [
+        ":install_cluster_test",
+        ":k3s_cluster_test",
+        ":nettest_cluster_test",
+        ":renumber_test",
+    ],
+)
+
+# ---- two VMs ping each other over the bridge --------------------------------
+
+firecracker_initramfs(
+    name = "nettest_initrd",
+    init = "nettest_init.sh",
+)
+
+firecracker_microvm(
+    name = "nettest_vm",
+    initrd = ":nettest_initrd",
+    mem_mib = 128,
+)
+
+firecracker_cluster_test(
+    name = "nettest_cluster_test",
+    expect_marker = "NETOK 10.211.56.11->10.211.56.12",
+    leader_idx = "1",
+    nodes = [
+        "1,10.211.56.11,06:00:AC:10:38:11,ofd.peer=10.211.56.12",
+        "2,10.211.56.12,06:00:AC:10:38:12,ofd.peer=10.211.56.11",
+    ],
+    subnet_gw = "10.211.56.1/24",
+    timeout_seconds = 60,
+    vm = ":nettest_vm",
+)
+
+# ---- a real 3-node k3s cluster (1 server + 2 agents) -----------------------
+
+genrule(
+    name = "k3s_cluster_rootfs",
+    srcs = [
+        "//firecracker:busybox_static",
+        "//firecracker:k3s_binary",
+        "//firecracker:k3s_cluster_init",
+    ],
+    outs = ["k3s_cluster_rootfs.ext4"],
+    cmd = "$(execpath //firecracker:mkk3srootfs) --out $@ " +
+          "--busybox $(execpath //firecracker:busybox_static) " +
+          "--k3s $(execpath //firecracker:k3s_binary) " +
+          "--init $(execpath //firecracker:k3s_cluster_init) " +
+          "--test-binary $(execpath //firecracker:busybox_static) --test-binary-name dummytest " +
+          "--scenario cluster --size-mb 2048 --label k3scluster",
+    local = True,
+    tools = ["//firecracker:mkk3srootfs"],
+)
+
+firecracker_microvm(
+    name = "k3s_cluster_vm",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " init=/sbin/init",
+    mem_mib = 1536,
+    rootfs = ":k3s_cluster_rootfs",
+    vcpus = 2,
+)
+
+firecracker_cluster_test(
+    name = "k3s_cluster_test",
+    expect_marker = "K3SC_CLUSTER_READY nodes=3",
+    leader_idx = "0",
+    nodes = [
+        "0,10.211.57.10,06:00:AC:10:39:10,ofd.role=server ofd.node=server0 ofd.token=fctesttoken ofd.expect=3",
+        "1,10.211.57.11,06:00:AC:10:39:11,ofd.role=agent ofd.node=agent1 ofd.token=fctesttoken ofd.server=10.211.57.10",
+        "2,10.211.57.12,06:00:AC:10:39:12,ofd.role=agent ofd.node=agent2 ofd.token=fctesttoken ofd.server=10.211.57.10",
+    ],
+    subnet_gw = "10.211.57.1/24",
+    timeout_seconds = 360,
+    vm = ":k3s_cluster_vm",
+)
+
+# ---- renumber: persistent disks survive a reboot onto a new subnet ---------
+
+firecracker_rootfs(
+    name = "renumber_rootfs",
+    execs = {
+        "//firecracker:busybox_static": "/bin/busybox",
+        "renumber_init.sh": "/sbin/init",
+    },
+    label = "renumber",
+    size_mb = 16,
+)
+
+firecracker_microvm(
+    name = "renumber_vm",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " rw init=/sbin/init",
+    mem_mib = 128,
+    rootfs = ":renumber_rootfs",
+)
+
+firecracker_renumber_test(
+    name = "renumber_test",
+    expect_marker = "RN_HEAL_OK old=10.211.58.11 new=10.211.59.11",
+    gw1 = "10.211.58.1/24",
+    gw2 = "10.211.59.1/24",
+    nodes1 = [
+        "1,10.211.58.11,06:00:AC:10:3A:11,fc.peer=10.211.58.12",
+        "2,10.211.58.12,06:00:AC:10:3A:12,fc.peer=10.211.58.11",
+    ],
+    nodes2 = [
+        "1,10.211.59.11,06:00:AC:10:3A:11,fc.peer=10.211.59.12",
+        "2,10.211.59.12,06:00:AC:10:3A:12,fc.peer=10.211.59.11",
+    ],
+    timeout1 = 60,
+    timeout2 = 60,
+    vm = ":renumber_vm",
+)
+
+# ---- install-to-disk, then boot each node from its installed GPT disk ------
+
+firecracker_rootfs(
+    name = "install_node_rootfs",
+    execs = {
+        "//firecracker:busybox_static": "/bin/busybox",
+        "install_node_init.sh": "/sbin/init",
+    },
+    # /etc must exist so the installer can inject /etc/installed-settings.
+    files = {"hostname.txt": "/etc/hostname"},
+    label = "OFD_ROOTFS",
+    size_mb = 16,
+)
+
+firecracker_microvm(
+    name = "install_node_vm",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " rw init=/sbin/init",
+    mem_mib = 128,
+    rootfs = ":install_node_rootfs",
+)
+
+sh_binary(
+    name = "installer",
+    srcs = ["installer.sh"],
+)
+
+firecracker_install_cluster_test(
+    name = "install_cluster_test",
+    expect_marker = "INSTALL_BOOT_OK root=/dev/vda2 secret=0123abcd peer=10.211.60.12",
+    gw = "10.211.60.1/24",
+    installer = ":installer",
+    nodes = [
+        "1,10.211.60.11,06:00:AC:10:3C:11,fc.peer=10.211.60.12",
+        "2,10.211.60.12,06:00:AC:10:3C:12,fc.peer=10.211.60.11",
+    ],
+    rootfs = ":install_node_rootfs",
+    secret = "0123abcd0123abcd0123abcd0123abcd",
+    timeout_seconds = 60,
+    vm = ":install_node_vm",
+)

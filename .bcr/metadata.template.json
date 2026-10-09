@@ -1,0 +1,14 @@
+{
+  "homepage": "https://github.com/aquaduct-dev/rules_firecracker",
+  "maintainers": [
+    {
+      "name": "Rohit Singh",
+      "github": "rohits2"
+    }
+  ],
+  "repository": [
+    "github:aquaduct-dev/rules_firecracker"
+  ],
+  "versions": [],
+  "yanked_versions": {}
+}

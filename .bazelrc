@@ -1,12 +1,23 @@
-# Firecracker microVM tests need /dev/kvm visible inside the sandbox.
-# Tests are tagged `requires-kvm` so callers can opt out on KVM-less
-# hosts via `--test_tag_filters=-requires-kvm`. The invoking user must be
-# in the `kvm` group (uid/gid mapping is identity inside the sandbox).
-# Consumers copy these lines into their own .bazelrc.
+# --- kvm: run firecracker tests -------------------------------------------
+# Consumers copy this block into their own .bazelrc. Firecracker tests are
+# tagged `requires-kvm`; skip them on KVM-less hosts with
+#   --test_tag_filters=-requires-kvm
+# The invoking user needs rw access to /dev/kvm (e.g. membership in the
+# `kvm` group); bazel's sandbox keeps the host uid/gid.
 build:kvm --sandbox_add_mount_pair=/dev/kvm
 test:kvm --sandbox_add_mount_pair=/dev/kvm
-test:kvm --test_env=HOME
-# Pass the host's PATH through so firecracker_test can find the
-# `firecracker` binary (typically installed under ~/.local/bin or
-# /usr/local/bin — non-hermetic for now).
-test:kvm --test_env=PATH
+# The firecracker binary comes from runfiles (//firecracker:firecracker), so
+# no host PATH is passed through.
+
+# --- ci: what .github/workflows/ci.yml runs -------------------------------
+# Cluster tests fail (instead of SKIP) when sudo/kvm/host tools are missing.
+test:ci --config=kvm
+test:ci --test_env=FC_NO_SKIP=1
+test:ci --test_output=errors
+test:ci --verbose_failures
+build:ci --verbose_failures
+build:ci --color=yes
+build:ci --show_progress_rate_limit=30
+
+# Local overrides (e.g. --disk_cache) go in user.bazelrc, which is gitignored.
+try-import %workspace%/user.bazelrc

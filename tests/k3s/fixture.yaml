@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fc-fixture
+  namespace: default
+data:
+  marker: from-extra-manifest
