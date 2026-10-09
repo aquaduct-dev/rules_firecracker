@@ -35,3 +35,7 @@ into your own and run them with `bazel test --config=kvm`.
   bison libelf-dev libssl-dev`); ~5-10 min cold.
 - Rootfs builders need `e2fsprogs` >= 1.43; the cluster tests need
   passwordless `sudo` for bridge/TAP setup and skip without it.
+
+## License
+
+[GPL-3.0](LICENSE).
