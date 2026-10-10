@@ -3,15 +3,68 @@ module(
     version = "0.0.0",
 )
 
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
 
-# Only the k3s_smoke self-test is written in Go.
+# ---- dev dependencies (self-tests, examples, docs) -------------------------
+
+# The guest-side k3s test binaries (examples/k3s_smoke, tests/k3s_extras).
 bazel_dep(name = "rules_go", version = "0.60.0", dev_dependency = True)
+
+# docs/: stardoc renders defs.bzl; write_source_files keeps docs/ in sync.
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5", dev_dependency = True)
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
 go_sdk.download(version = "1.25.4")
 
+# rules_oci builds the tiny OCI image the firecracker_container self-test
+# boots (tests/container). Consumers bring their own image rules.
+bazel_dep(name = "rules_oci", version = "2.3.0", dev_dependency = True)
+
+# ---- pinned binaries --------------------------------------------------------
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+# Firecracker VMM, pinned to an official upstream release so the runners
+# never depend on a `firecracker` on the host PATH. //:firecracker selects
+# the binary matching the target CPU. Upgrades: bump the version in the
+# urls/strip_prefix/build_file_content of both archives below and replace
+# both sha256s with the values published in the release's
+# firecracker-<ver>-<arch>.tgz.sha256.txt assets.
+http_archive(
+    name = "firecracker_x86_64",
+    build_file_content = """
+alias(name = "firecracker", actual = "firecracker-v1.17.0-x86_64", visibility = ["//visibility:public"])
+exports_files(["firecracker-v1.17.0-x86_64"])
+""",
+    sha256 = "06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558",
+    strip_prefix = "release-v1.17.0-x86_64",
+    urls = ["https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-x86_64.tgz"],
+)
+
+http_archive(
+    name = "firecracker_aarch64",
+    build_file_content = """
+alias(name = "firecracker", actual = "firecracker-v1.17.0-aarch64", visibility = ["//visibility:public"])
+exports_files(["firecracker-v1.17.0-aarch64"])
+""",
+    sha256 = "e351ebe4f7a16b5873bbd51005d2e6767103cff4d5ebc829df2d3f95a93e2256",
+    strip_prefix = "release-v1.17.0-aarch64",
+    urls = ["https://github.com/firecracker-microvm/firecracker/releases/download/v1.17.0/firecracker-v1.17.0-aarch64.tgz"],
+)
+
+# Statically-linked jq used by the firecracker_k3s_test launcher to validate
+# the guest's report JSON (no host jq needed).
+http_file(
+    name = "jq_linux_amd64",
+    downloaded_file_path = "jq",
+    executable = True,
+    sha256 = "020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d",
+    urls = ["https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"],
+)
 
 # Firecracker boot kernel source. Linux 6.1.155 from kernel.org, built
 # locally by //:vmlinux against //:vmlinux-6.1.config (the upstream

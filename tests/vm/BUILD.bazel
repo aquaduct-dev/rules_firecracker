@@ -1,0 +1,198 @@
+# Single-VM tests: boot real microVMs under the pinned firecracker and assert
+# on the serial console. All need /dev/kvm (`--config=kvm`).
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load(
+    "//firecracker:defs.bzl",
+    "DEFAULT_KERNEL_CMDLINE",
+    "firecracker_initramfs",
+    "firecracker_microvm",
+    "firecracker_rootfs",
+    "firecracker_test",
+)
+
+package(default_visibility = ["//tests:__subpackages__"])
+
+exports_files(glob(["*.sh"]))
+
+# ---- initrd boot: files/execs layout, vcpus, mem, cmdline -------------------
+
+firecracker_initramfs(
+    name = "initrd",
+    execs = {"//firecracker:busybox_static": "/opt/bin/busybox"},
+    files = {"greeting.txt": "/etc/greeting"},
+    init = "initrd_init.sh",
+)
+
+firecracker_microvm(
+    name = "initrd_vm",
+    initrd = ":initrd",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " fctest.flag=1",
+    mem_mib = 192,
+    vcpus = 2,
+)
+
+firecracker_test(
+    name = "initrd_boot_test",
+    expect_markers = [
+        "HELLO_FROM_INITRD",
+        "GREETING=hello from files",
+        "STATIC_EXEC_OK",
+        "INIT_IS_EXECUTABLE",
+        "NPROC=2",
+        "MEM_OK",
+        "CMDLINE_OK",
+        "INITRD_DONE",
+    ],
+    microvm = ":initrd_vm",
+    unexpected_markers = [
+        "Kernel panic",
+        "MEM_BAD",
+    ],
+)
+
+# ---- rootfs boot ----------------------------------------------------------
+
+firecracker_rootfs(
+    name = "rootfs",
+    execs = {
+        "//firecracker:busybox_static": "/bin/busybox",
+        "rootfs_init.sh": "/sbin/init",
+    },
+    files = {"rootfs_greeting.txt": "/etc/rootfs-greeting"},
+    label = "fctestroot",
+    size_mb = 16,
+)
+
+firecracker_microvm(
+    name = "rootfs_vm",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " init=/sbin/init",
+    mem_mib = 128,
+    rootfs = ":rootfs",
+)
+
+firecracker_test(
+    name = "rootfs_boot_test",
+    expect_markers = [
+        "HELLO_FROM_ROOTFS",
+        "ROOT_IS_EXT4_VDA",
+        "ROOTFS_GREETING=hello from the ext4 rootfs",
+    ],
+    microvm = ":rootfs_vm",
+    unexpected_markers = ["Kernel panic"],
+)
+
+# ---- extra_drive: a firecracker_rootfs image as a writable data disk ------
+
+firecracker_rootfs(
+    name = "data_disk",
+    files = {"payload.txt": "/data/payload.txt"},
+    label = "fcdata",
+    size_mb = 8,
+)
+
+firecracker_initramfs(
+    name = "extra_drive_initrd",
+    init = "extra_drive_init.sh",
+)
+
+firecracker_microvm(
+    name = "extra_drive_vm",
+    extra_drive = ":data_disk",
+    initrd = ":extra_drive_initrd",
+    mem_mib = 128,
+)
+
+firecracker_test(
+    name = "extra_drive_test",
+    expect_markers = [
+        "PAYLOAD=payload-from-rootfs-image",
+        "EXTRA_DRIVE_WRITABLE",
+        "EXTRA_DRIVE_PERSISTED",
+    ],
+    microvm = ":extra_drive_vm",
+    unexpected_markers = ["EXTRA_DRIVE_MOUNT_FAILED"],
+)
+
+# ---- timing behavior ------------------------------------------------------
+
+firecracker_initramfs(
+    name = "hang_initrd",
+    init = "hang_init.sh",
+)
+
+firecracker_microvm(
+    name = "hang_vm",
+    initrd = ":hang_initrd",
+    mem_mib = 128,
+)
+
+# Early exit: the VM never powers off and timeout_seconds is 600, but the test
+# must end as soon as HANG_START is printed. Bazel's `short` timeout (60s)
+# fails the test if early exit is broken.
+firecracker_test(
+    name = "early_exit_test",
+    expect_markers = ["HANG_START"],
+    microvm = ":hang_vm",
+    timeout = "short",
+    timeout_seconds = 600,
+)
+
+# A VM killed by timeout_seconds is not a failure by itself: with no
+# expect_markers and an absent unexpected marker this passes after ~5s.
+firecracker_test(
+    name = "timeout_kill_passes_test",
+    microvm = ":hang_vm",
+    timeout = "short",
+    timeout_seconds = 5,
+    unexpected_markers = ["NEVER_PRINTED"],
+)
+
+# ---- failing paths (inner tests are manual; wrappers assert they fail) ----
+
+firecracker_test(
+    name = "inner_expect_missing",
+    expect_markers = [
+        "HELLO_FROM_INITRD",
+        "THIS_MARKER_NEVER_APPEARS",
+    ],
+    microvm = ":initrd_vm",
+    tags = ["manual"],
+    timeout_seconds = 30,
+)
+
+firecracker_test(
+    name = "inner_unexpected_present",
+    expect_markers = ["INITRD_DONE"],
+    microvm = ":initrd_vm",
+    tags = ["manual"],
+    unexpected_markers = ["HELLO_FROM_INITRD"],
+)
+
+# The marker never comes and the VM never exits: the timeout must end it.
+firecracker_test(
+    name = "inner_timeout",
+    expect_markers = ["NEVER_PRINTED"],
+    microvm = ":hang_vm",
+    tags = ["manual"],
+    timeout_seconds = 5,
+)
+
+[sh_test(
+    name = name,
+    srcs = ["expect_failure.sh"],
+    data = [":" + inner],
+    # env, not args: args are shell-tokenized and the strings have spaces.
+    env = {
+        # sh_test outputs more than one file, so spell the rlocation path.
+        "INNER_RLOC": "_main/tests/vm/" + inner,
+        "MAX_SECONDS": max_seconds,
+        "WANT": want,
+    },
+    tags = ["requires-kvm"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+) for name, inner, want, max_seconds in [
+    ("expect_missing_fails_test", "inner_expect_missing", "FAIL expect: THIS_MARKER_NEVER_APPEARS", "45"),
+    ("unexpected_present_fails_test", "inner_unexpected_present", "FAIL unexpect: HELLO_FROM_INITRD", "45"),
+    ("timeout_fails_test", "inner_timeout", "FAIL expect: NEVER_PRINTED", "30"),
+]]

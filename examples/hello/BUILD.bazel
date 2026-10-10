@@ -1,0 +1,59 @@
+# The smallest useful rules_firecracker setup: an initramfs and an ext4
+# rootfs, each booted in a microVM and checked by a firecracker_test.
+#
+#   bazel test --config=kvm //examples/hello/...
+#   bazel run //examples/hello:hello_vm      # boot it interactively
+
+load(
+    "//firecracker:defs.bzl",
+    "DEFAULT_KERNEL_CMDLINE",
+    "firecracker_initramfs",
+    "firecracker_microvm",
+    "firecracker_rootfs",
+    "firecracker_test",
+)
+
+firecracker_initramfs(
+    name = "hello_initrd",
+    files = {"greeting.txt": "/etc/greeting"},
+    init = "hello_init.sh",
+)
+
+firecracker_microvm(
+    name = "hello_vm",
+    initrd = ":hello_initrd",
+    mem_mib = 128,
+)
+
+firecracker_test(
+    name = "hello_test",
+    expect_markers = [
+        "HELLO_FROM_INITRD",
+        "GREETING=hello, firecracker",
+    ],
+    microvm = ":hello_vm",
+    unexpected_markers = ["Kernel panic"],
+)
+
+firecracker_rootfs(
+    name = "hello_rootfs",
+    execs = {
+        "//firecracker:busybox_static": "/bin/busybox",
+        "hello_rootfs_init.sh": "/sbin/init",
+    },
+    label = "hello",
+    size_mb = 16,
+)
+
+firecracker_microvm(
+    name = "hello_rootfs_vm",
+    kernel_cmdline = DEFAULT_KERNEL_CMDLINE + " rw init=/sbin/init",
+    mem_mib = 128,
+    rootfs = ":hello_rootfs",
+)
+
+firecracker_test(
+    name = "hello_rootfs_test",
+    expect_markers = ["HELLO_FROM_ROOTFS"],
+    microvm = ":hello_rootfs_vm",
+)

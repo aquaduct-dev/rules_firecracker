@@ -1,0 +1,19 @@
+# BCR presubmit. The BCR CI has no /dev/kvm, so it only builds the e2e smoke
+# module's initramfs + the pinned firecracker (exercising the external-repo
+# labels; //firecracker:vmlinux needs the kernel build toolchain) and runs its KVM-free test;
+# the full suite, VM boots included, runs in this repo's GitHub Actions.
+bcr_test_module:
+  module_path: e2e/smoke
+  matrix:
+    platform: ["ubuntu2204", "ubuntu2404"]
+    bazel: ["9.x"]
+  tasks:
+    run_test_module:
+      name: Run the e2e smoke module
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - "//:initrd"
+        - "@rules_firecracker//firecracker:firecracker"
+      test_targets:
+        - "//:firecracker_version_test"

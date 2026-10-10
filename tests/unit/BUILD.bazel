@@ -1,0 +1,123 @@
+# Unit tests: the image builders, test-script generators and the microvm
+# launcher, exercised without KVM (no VM is booted here).
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//firecracker:defs.bzl", "firecracker_microvm")
+
+_RUNFILES = "@bazel_tools//tools/bash/runfiles"
+
+_COMMON_DATA = [
+    "testlib.sh",
+    "//firecracker:busybox_static",
+    "//firecracker:jq",
+]
+
+_COMMON_ENV = {
+    "BUSYBOX_RLOC": "$(rlocationpath //firecracker:busybox_static)",
+    "JQ_RLOC": "$(rlocationpath //firecracker:jq)",
+}
+
+sh_test(
+    name = "firecracker_binary_test",
+    srcs = ["firecracker_binary_test.sh"],
+    data = _COMMON_DATA + ["//firecracker:firecracker"],
+    env = _COMMON_ENV | {"FIRECRACKER_RLOC": "$(rlocationpath //firecracker:firecracker)"},
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "mkinitramfs_test",
+    srcs = ["mkinitramfs_test.sh"],
+    data = _COMMON_DATA + [
+        "//firecracker:mkinitramfs",
+        "//tests/vm:initrd",
+    ],
+    env = _COMMON_ENV | {"MACRO_INITRD_RLOC": "$(rlocationpath //tests/vm:initrd)"},
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "mkrootfs_test",
+    srcs = ["mkrootfs_test.sh"],
+    data = _COMMON_DATA + [
+        "//firecracker:mkrootfs",
+        "//tests/vm:rootfs",
+    ],
+    env = _COMMON_ENV | {"MACRO_ROOTFS_RLOC": "$(rlocationpath //tests/vm:rootfs)"},
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "mkk3srootfs_test",
+    srcs = ["mkk3srootfs_test.sh"],
+    data = _COMMON_DATA + [
+        "//firecracker:k3s_init",
+        "//firecracker:mkk3srootfs",
+    ],
+    env = _COMMON_ENV | {"K3S_INIT_RLOC": "$(rlocationpath //firecracker:k3s_init)"},
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "mkcontainerfs_test",
+    srcs = ["mkcontainerfs_test.sh"],
+    data = _COMMON_DATA + ["//firecracker:mkcontainerfs"],
+    env = _COMMON_ENV,
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "gen_test_test",
+    srcs = ["gen_test_test.sh"],
+    data = _COMMON_DATA + ["//firecracker:gen_test"],
+    env = _COMMON_ENV,
+    deps = [_RUNFILES],
+)
+
+sh_test(
+    name = "gen_k3s_test_test",
+    srcs = ["gen_k3s_test_test.sh"],
+    data = _COMMON_DATA + ["//firecracker:gen_k3s_test"],
+    env = _COMMON_ENV,
+    deps = [_RUNFILES],
+)
+
+# ---- launcher tests against a fake firecracker (the `firecracker` attr) ----
+
+firecracker_microvm(
+    name = "fake_initrd_vm",
+    extra_drive = "fake_disk.img",
+    firecracker = "fake_firecracker.sh",
+    initrd = "fake_initrd.cpio.gz",
+    kernel = "fake_kernel.bin",
+    kernel_cmdline = "console=ttyS0 custom.arg=1",
+    mem_mib = 96,
+    vcpus = 3,
+)
+
+firecracker_microvm(
+    name = "fake_rootfs_vm",
+    firecracker = "fake_firecracker.sh",
+    kernel = "fake_kernel.bin",
+    rootfs = "fake_disk.img",
+)
+
+sh_test(
+    name = "runner_test",
+    srcs = ["runner_test.sh"],
+    data = _COMMON_DATA + [
+        ":fake_initrd_vm",
+        ":fake_rootfs_extra_vm",
+        ":fake_rootfs_vm",
+    ],
+    env = _COMMON_ENV,
+    deps = [_RUNFILES],
+)
+
+firecracker_microvm(
+    name = "fake_rootfs_extra_vm",
+    extra_drive = "fake_initrd.cpio.gz",
+    firecracker = "fake_firecracker.sh",
+    kernel = "fake_kernel.bin",
+    rootfs = "fake_disk.img",
+)

@@ -1,0 +1,12 @@
+# End-to-end smoke workspace: consumes rules_firecracker as an EXTERNAL module
+# (like any user would), which exercises the Label()/runfiles handling for
+# callers outside the rules' own repository. Also the BCR test module.
+module(name = "rules_firecracker_e2e_smoke")
+
+bazel_dep(name = "rules_firecracker", version = "0.0.0")
+local_path_override(
+    module_name = "rules_firecracker",
+    path = "../..",
+)
+
+bazel_dep(name = "rules_shell", version = "0.6.1")

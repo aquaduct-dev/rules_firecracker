@@ -1,0 +1,8 @@
+# Same kvm/ci configs a consumer copies from the rules_firecracker README.
+build:kvm --sandbox_add_mount_pair=/dev/kvm
+test:kvm --sandbox_add_mount_pair=/dev/kvm
+test:ci --config=kvm
+test:ci --test_env=FC_NO_SKIP=1
+test:ci --test_output=errors
+build:ci --verbose_failures
+try-import %workspace%/user.bazelrc

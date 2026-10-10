@@ -1,0 +1,112 @@
+# Public targets of rules_firecracker. The macros live in defs.bzl; their
+# implementation, scripts and templates are under private/ and are not part
+# of the public API.
+#
+# `vmlinux`          — the firecracker guest kernel (Linux 6.1.155), built
+#                      from the kernel.org tarball pinned in MODULE.bazel
+#                      against private/vmlinux-6.1.config (upstream
+#                      firecracker CI config + CONFIG_FUSE_FS=y). Uses the
+#                      HOST toolchain (gcc make bc flex bison libelf-dev
+#                      libssl-dev). Sandboxed but not `local`, so it is
+#                      cached by --disk_cache/--remote_cache.
+# `firecracker`      — the pinned upstream firecracker release binary; every
+#                      runner resolves it via runfiles, never the host PATH.
+# `busybox_static`   — busybox 1.35.0 x86_64-musl, pinned by sha256.
+# `k3s_binary`       — static k3s v1.30.4+k3s1, pinned by sha256.
+# `jq`               — static jq 1.8.1 used by the k3s test launcher.
+# `mk*` / `gen_*`    — the image builders and test-script generators the
+#                      macros drive; usable directly from genrules.
+
+load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+exports_files(["defs.bzl"])
+
+bzl_library(
+    name = "defs",
+    srcs = ["defs.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//firecracker/private:macros"],
+)
+
+alias(
+    name = "firecracker",
+    actual = select({
+        "@platforms//cpu:aarch64": "@firecracker_aarch64//:firecracker",
+        "//conditions:default": "@firecracker_x86_64//:firecracker",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "jq",
+    actual = "@jq_linux_amd64//file",
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "vmlinux",
+    srcs = [
+        "@firecracker_kernel_src//file",
+        "//firecracker/private:vmlinux-6.1.config",
+    ],
+    outs = ["vmlinux.bin"],
+    cmd = (
+        "$(execpath //firecracker/private:build_kernel.sh) " +
+        "--tarball $(execpath @firecracker_kernel_src//file) " +
+        "--config $(execpath //firecracker/private:vmlinux-6.1.config) " +
+        "--out $@"
+    ),
+    tools = ["//firecracker/private:build_kernel.sh"],
+    visibility = ["//visibility:public"],
+)
+
+# Upstream serves busybox and k3s without the executable bit; copy + chmod.
+genrule(
+    name = "busybox_static",
+    srcs = ["@busybox_static_x86_64//file"],
+    outs = ["busybox-static"],
+    cmd = "cp $< $@ && chmod +x $@",
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "k3s_binary",
+    srcs = ["@k3s_binary_x86_64//file"],
+    outs = ["k3s"],
+    cmd = "cp $< $@ && chmod +x $@",
+    visibility = ["//visibility:public"],
+)
+
+# Guest PID-1 scripts, usable as the `init` of firecracker_k3s_test or the
+# `--init` of mkk3srootfs.
+alias(
+    name = "k3s_init",
+    actual = "//firecracker/private:k3s_init.sh",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "k3s_cluster_init",
+    actual = "//firecracker/private:k3s_cluster_init.sh",
+    visibility = ["//visibility:public"],
+)
+
+[sh_binary(
+    name = tool,
+    srcs = ["//firecracker/private:{}.sh".format(tool)],
+    visibility = ["//visibility:public"],
+) for tool in [
+    "mkinitramfs",
+    "mkrootfs",
+    "mkcontainerfs",
+    "mkk3srootfs",
+    # Debian+systemd rootfs (docker/podman + fakeroot) for systemd-managed rigs.
+    "mksystemdrootfs",
+    # Production Debian+systemd node rootfs (docker/podman + fakeroot).
+    "mknoderootfs",
+    # Self-contained Debian node image with its own kernel (docker/podman).
+    "mknodeimage",
+    "gen_test",
+    "gen_k3s_test",
+]]

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  # Branch pushes are covered by their pull request; avoid running twice.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast feedback: analysis of every target, the KVM-free unit tests, and the
+  # stardoc freshness check. Needs neither /dev/kvm nor the guest kernel.
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          kvm: "false"
+      - name: Analyze everything
+        run: bazel build --config=ci --nobuild //...
+      - name: Unit + docs tests
+        run: bazel test --config=ci //tests/unit/... //docs/...
+
+  # Builds the guest kernel (root module and the e2e workspace see it under
+  # different paths, so both) and saves it in the disk cache the other jobs
+  # restore. A cache hit makes this job a no-op.
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          kvm: "false"
+      - name: Build //firecracker:vmlinux
+        run: bazel build --config=ci //firecracker:vmlinux
+      - name: Build the kernel as seen from the e2e workspace
+        working-directory: e2e/smoke
+        run: bazel build --config=ci @rules_firecracker//firecracker:vmlinux
+      - name: Save kernel disk cache
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/fc-disk-cache
+          key: fc-kernel-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'firecracker/BUILD.bazel', 'firecracker/private/build_kernel.sh', 'firecracker/private/vmlinux-6.1.config') }}
+        continue-on-error: true  # the key already exists after a cache hit
+
+  # Every non-manual test: unit, single-VM boots, failure paths, container,
+  # k3s single-node and the examples.
+  vm:
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Check firecracker is not on the host PATH
+        run: "! command -v firecracker"
+      - name: Test
+        run: bazel test --config=ci //...
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: vm-testlogs
+          path: bazel-testlogs/**/test.log
+
+  # Multi-VM rigs on a host bridge (sudo + kvm): 2-VM ping, 3-node k3s
+  # cluster, renumber with persistent disks, install-to-disk + boot.
+  cluster:
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Test
+        # One rig at a time: the k3s cluster alone wants ~4.6 GiB of guest RAM.
+        run: bazel test --config=ci --local_test_jobs=1 //tests/cluster:cluster
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: cluster-testlogs
+          path: bazel-testlogs/**/test.log
+
+  # The rules consumed as an external module (local_path_override), as users
+  # and the BCR test module do.
+  e2e:
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Test e2e/smoke
+        working-directory: e2e/smoke
+        run: bazel test --config=ci //...

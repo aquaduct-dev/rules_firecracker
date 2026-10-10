@@ -1,0 +1,58 @@
+name: Set up rules_firecracker CI host
+description: >
+  Installs the host packages the rules need, makes /dev/kvm usable, allows
+  bazel's linux-sandbox (unprivileged user namespaces) on Ubuntu 24.04,
+  installs bazelisk with repository caching, and restores the disk cache
+  holding the prebuilt guest kernel.
+inputs:
+  kvm:
+    description: Enable /dev/kvm for the runner user.
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install host packages
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        # kernel build: build-essential flex bison bc libelf-dev libssl-dev
+        # images: e2fsprogs; install-to-disk rig: gdisk dosfstools exfatprogs
+        sudo apt-get install -y -qq --no-install-recommends \
+          build-essential flex bison bc libelf-dev libssl-dev \
+          e2fsprogs gdisk dosfstools exfatprogs util-linux iproute2
+
+    - name: Allow bazel's sandbox (unprivileged user namespaces)
+      shell: bash
+      run: |
+        if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        fi
+
+    - name: Enable KVM
+      if: inputs.kvm == 'true'
+      shell: bash
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+          | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        ls -l /dev/kvm
+
+    - uses: bazel-contrib/setup-bazel@8cb04a772ab4c1eb984e9c1b493a182e96c5e425 # 0.19.0
+      with:
+        bazelisk-cache: true
+        repository-cache: true
+        bazelrc: |
+          common --disk_cache=/home/runner/.cache/fc-disk-cache
+          common --color=yes
+          common --show_progress_rate_limit=30
+
+    # The guest kernel takes ~10-15 min to build on a standard runner; the
+    # `kernel` job builds it once per kernel-affecting change and saves the
+    # disk cache under this key.
+    - name: Restore kernel disk cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/fc-disk-cache
+        key: fc-kernel-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'firecracker/BUILD.bazel', 'firecracker/private/build_kernel.sh', 'firecracker/private/vmlinux-6.1.config') }}
+        restore-keys: fc-kernel-${{ runner.os }}-

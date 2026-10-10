@@ -1,0 +1,86 @@
+# firecracker_k3s_test with every extra_* attribute: the guest binary checks
+# that manifests were applied, files/execs installed with the right modes and
+# the image tarball imported into k3s' containerd.
+
+load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//firecracker:defs.bzl", "firecracker_k3s_test")
+
+go_binary(
+    name = "k3s_extras",
+    srcs = ["main.go"],
+    pure = "on",
+    static = "on",
+)
+
+# A one-layer image whose tarball is preloaded via extra_images.
+genrule(
+    name = "image_layer",
+    srcs = ["data.txt"],
+    outs = ["image_layer.tar"],
+    cmd = "d=$$(mktemp -d) && cp $< $$d/data.txt && tar --owner=0 --group=0 --mtime=@0 -C $$d -cf $@ data.txt && rm -rf $$d",
+)
+
+oci_image(
+    name = "image",
+    architecture = "amd64",
+    entrypoint = ["/data.txt"],
+    os = "linux",
+    tars = [":image_layer"],
+)
+
+oci_load(
+    name = "image_load",
+    image = ":image",
+    repo_tags = ["fctest/extra:latest"],
+)
+
+filegroup(
+    name = "image_tarball",
+    srcs = [":image_load"],
+    output_group = "tarball",
+)
+
+firecracker_k3s_test(
+    name = "k3s_extras_test",
+    extra_execs = {"//firecracker:busybox_static": "/opt/extra/busybox"},
+    extra_files = {"data.txt": "/etc/fcextra/data.txt"},
+    extra_images = {":image_tarball": "fctest-extra.tar"},
+    extra_manifests = {
+        "fixture.yaml": "fixture.yaml",
+        "k3s_extras.yaml": "k3s_extras.yaml",
+    },
+    scenario = "k3s_extras",
+    test_binary = ":k3s_extras",
+    timeout_seconds = 300,
+)
+
+# ---- failing path: a failing pass_condition fails the test -------------------
+
+go_binary(
+    name = "failing",
+    srcs = ["failing/main.go"],
+    pure = "on",
+    static = "on",
+)
+
+firecracker_k3s_test(
+    name = "inner_failing_pc",
+    scenario = "failing",
+    tags = ["manual"],
+    test_binary = ":failing",
+    timeout_seconds = 300,
+)
+
+sh_test(
+    name = "k3s_failing_pc_fails_test",
+    srcs = ["//tests/vm:expect_failure.sh"],
+    data = [":inner_failing_pc"],
+    env = {
+        "INNER_RLOC": "_main/tests/k3s/inner_failing_pc",
+        "WANT": "deliberate.failure",
+    },
+    tags = ["requires-kvm"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)
