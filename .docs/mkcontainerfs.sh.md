@@ -1,5 +1,0 @@
-<!-- docdaemon ts:2026-10-09T22:28:55Z hash:ecd753add8f3fafe model:openrouter/qwen/qwen3.7-flash -->
-## TL;DR
-This script converts an OCI image layout into a bootable ext4 root filesystem by flattening layers and injecting a custom init process.
-
-It resolves the manifest to extract layer digests and configuration, then iterates through each layer blob. It handles AUFS-style whiteouts (`.wh.*`) to correctly apply file deletions and opaque directories during the merge into the staging rootfs. After materializing the filesystem tree, it installs a statically-linked busybox binary. Finally, it generates `/sbin/init` using Python to parse the image config, merging environment variables and command arguments before writing a shell script that mounts virtual filesystems (`/proc`, `/sys`, `/dev`) and executes the container entrypoint. The result is packaged into a sparse ext4 image using `mkfs.ext4 -d` for efficient storage.

@@ -1,15 +1,16 @@
-<!-- docdaemon ts:2026-10-09T22:28:52Z hash:68b614e13d75615d model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-10T19:04:47Z hash:440bf99561726154 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file defines the build targets for Firecracker microVMs, including kernel compilation, rootfs generation tools, and integration tests for networking and k3s clusters.
+This file defines the Bazel build configuration for the `rules_firecracker` project, primarily managing license distribution.
 
-### Build Targets
-*   **`vmlinux`**: Compiles Linux 6.1.155 from source using host tools (`local = True`).
-*   **`busybox_static` & `k3s_binary`**: Wraps external binaries to ensure executable permissions.
-*   **Rootfs Tools**: Shell scripts (`mkinitramfs`, `mkrootfs`, `mkk3srootfs`, etc.) that generate various filesystem images (Debian, systemd, k3s).
+### Purpose
+The `BUILD.bazel` file serves as the root build target for the repository. Its primary function is to expose the project's licensing information to consumers of the rules via the Bazel export mechanism.
 
-### Test Infrastructure
-*   **Networking Test**: `nettest_vm` boots two microVMs on a shared bridge to verify end-to-end network connectivity.
-*   **K3s Cluster Test**: `k3s_cluster_vm` runs a real multi-node k3s cluster over the shared bridge, satisfying the "No stub tests" criteria.
+### Key Elements
+*   **`exports_files(["LICENSE"])`**: This rule makes the `LICENSE` file available in the package. It allows other targets or users to reference the license text directly without needing to know its internal path structure. This is standard practice for open-source Bazel repositories to ensure compliance metadata is easily accessible.
 
-### Exports
-Publicly exports shell scripts like `cluster_run.sh` and test templates for use by external orchestrators.
+### Context
+This file sits at the root of the `rules_firecracker` workspace. It works in conjunction with:
+*   `README.md`: Provides usage instructions and context for the rules.
+*   `//firecracker:defs.bzl`: Contains the public API definitions (macros and rules) that this build system supports.
+
+By exporting the license, this file ensures that any binary or source artifact built within this workspace can correctly attribute the project's legal terms.
