@@ -1,30 +1,31 @@
 # rules_firecracker
 
-Bazel rules for building [Firecracker](https://firecracker-microvm.github.io/)
-microVM images and running tests inside them: initramfs and ext4 rootfs
-builders, a pinned 6.1 guest kernel, a pinned firecracker release, a runnable
-`firecracker_microvm`, and test macros from single-VM console checks up to
-multi-node k3s clusters booted on a host bridge.
+Bazel rules for booting real Linux VMs in your tests.
 
-Nothing is taken from the host `PATH` to run a VM: the firecracker binary is
-an official upstream release (v1.17.0) fetched by sha256 and resolved through
-runfiles. See [Host requirements](#host-requirements) for what the host still
-provides.
+They use [Firecracker](https://firecracker-microvm.github.io/) microVMs. You
+can build a boot image, start a VM from it, and check what it prints. The
+same rules scale up to a k3s cluster of several VMs on a shared network.
+
+You don't need firecracker installed. The rules download a pinned release
+(v1.17.0), check its sha256, and run that copy. The host still has to
+provide a few things, like `/dev/kvm`. See [Host requirements](#host-requirements).
 
 - [Setup](#setup)
 - [Quick start](#quick-start)
 - [API reference](#api-reference): [macros](#macros), [public targets](#public-targets), [tools](#image-builder-tools)
-- [Guest-side contracts](#guest-side-contracts)
+- [What guests print](#what-guests-print)
 - [Running in GitHub Actions](#running-in-github-actions)
 - [Host requirements](#host-requirements)
-- [Repository layout and development](#repository-layout-and-development)
+- [Working on this repo](#working-on-this-repo)
 
-Generated reference for every macro: [docs/defs.md](docs/defs.md).
+[docs/defs.md](docs/defs.md) has the same API reference, generated from the
+docstrings.
 
 ## Setup
 
+Add the module to your `MODULE.bazel`:
+
 ```starlark
-# MODULE.bazel
 bazel_dep(name = "rules_firecracker")
 git_override(
     module_name = "rules_firecracker",
@@ -33,25 +34,29 @@ git_override(
 )
 ```
 
+Load the macros you need:
+
 ```starlark
 load("@rules_firecracker//firecracker:defs.bzl", "firecracker_test")
 ```
 
-Copy the `kvm` config into your `.bazelrc`; every VM test is tagged
-`requires-kvm` and needs `/dev/kvm` mounted into the sandbox:
+VM tests need `/dev/kvm` inside Bazel's sandbox. Add this to your `.bazelrc`:
 
 ```
 build:kvm --sandbox_add_mount_pair=/dev/kvm
 test:kvm --sandbox_add_mount_pair=/dev/kvm
 ```
 
-Then `bazel test --config=kvm //...`. On a host without KVM, skip VM tests
-with `--test_tag_filters=-requires-kvm`. The invoking user needs read/write
-access to `/dev/kvm` (usually membership in the `kvm` group).
+Then run `bazel test --config=kvm //...`.
+
+Your user needs read and write access to `/dev/kvm`. That usually means
+being in the `kvm` group. On a machine without KVM, skip the VM tests with
+`--test_tag_filters=-requires-kvm`. Every VM test has that tag.
 
 ## Quick start
 
-From [`examples/hello`](examples/hello/BUILD.bazel):
+This is [`examples/hello`](examples/hello/BUILD.bazel). It boots a tiny VM
+and checks that it says hello.
 
 ```starlark
 load(
@@ -84,79 +89,101 @@ firecracker_test(
 )
 ```
 
+`hello_init.sh` runs as PID 1 inside the VM:
+
 ```sh
 #!/bin/sh
-# hello_init.sh — /init (PID 1)
 mount -t proc proc /proc
 echo "HELLO_FROM_INITRD"
 echo "GREETING=$(cat /etc/greeting)"
-reboot -f   # with reboot=k (default cmdline) this makes firecracker exit
+reboot -f   # ends the VM, so firecracker exits
 ```
 
-`bazel run //examples/hello:hello_vm` boots the same VM with its console on
-your terminal.
+To boot the VM yourself and watch its console, run
+`bazel run //examples/hello:hello_vm`.
 
 ## API reference
 
-Everything is loaded from `@rules_firecracker//firecracker:defs.bzl`. The
-default labels below are written relative to `@rules_firecracker`.
+Load everything from `@rules_firecracker//firecracker:defs.bzl`. Default
+labels below are relative to `@rules_firecracker`.
 
 ### Macros
 
-| Macro | Creates |
+| Macro | What you get |
 | --- | --- |
-| [`firecracker_initramfs`](#firecracker_initramfs) | `<name>.cpio.gz` initramfs |
-| [`firecracker_rootfs`](#firecracker_rootfs) | `<name>.ext4` disk image |
-| [`firecracker_microvm`](#firecracker_microvm) | runnable `sh_binary` that boots a VM |
-| [`firecracker_test`](#firecracker_test) | `sh_test` asserting on the serial console |
-| [`firecracker_container`](#firecracker_container) | microvm that runs one OCI image as the guest |
-| [`firecracker_k3s_test`](#firecracker_k3s_test) | `sh_test`: single-node k3s + guest test binary |
-| [`firecracker_cluster_test`](#firecracker_cluster_test) | `sh_test`: N VMs on a host bridge |
-| [`firecracker_renumber_test`](#firecracker_renumber_test) | `sh_test`: cluster rebooted onto a new subnet with persistent disks |
-| [`firecracker_install_cluster_test`](#firecracker_install_cluster_test) | `sh_test`: install to GPT disks, then boot them |
+| [`firecracker_initramfs`](#firecracker_initramfs) | An initramfs, `<name>.cpio.gz` |
+| [`firecracker_rootfs`](#firecracker_rootfs) | An ext4 disk image, `<name>.ext4` |
+| [`firecracker_microvm`](#firecracker_microvm) | A target you can `bazel run` to boot a VM |
+| [`firecracker_test`](#firecracker_test) | A test that boots a VM and checks its console |
+| [`firecracker_container`](#firecracker_container) | A VM that runs one OCI image |
+| [`firecracker_k3s_test`](#firecracker_k3s_test) | A test that runs your code against k3s in a VM |
+| [`firecracker_cluster_test`](#firecracker_cluster_test) | A test that boots several VMs on one network |
+| [`firecracker_renumber_test`](#firecracker_renumber_test) | A cluster test that moves the VMs to new IPs and reboots them |
+| [`firecracker_install_cluster_test`](#firecracker_install_cluster_test) | A cluster test that installs each node to disk, then boots the disks |
 
-`DEFAULT_KERNEL_CMDLINE` is also exported:
-`console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on`. `reboot=k`
-makes a guest `reboot -f` end the firecracker process, which is how guests
-signal "done" (a `poweroff` only halts the vCPU until the host kills it).
+The module also exports `DEFAULT_KERNEL_CMDLINE`:
+`console=ttyS0 reboot=k panic=1 pci=off random.trust_cpu=on`.
 
-Every macro forwards unknown keyword arguments (`**kwargs`) to its main
-underlying rule (`genrule`, `sh_binary` or `sh_test`).
+The `reboot=k` part matters. With it, a guest that runs `reboot -f` ends the
+firecracker process. That's how a guest says it's done. `poweroff` doesn't
+work for this. It only halts the CPU, and the VM sits there until something
+kills it.
+
+Every macro passes extra keyword arguments through to the rule underneath
+it (a `genrule`, `sh_binary` or `sh_test`).
 
 #### firecracker_initramfs
 
-Packs a gzip-compressed newc cpio. The archive holds a static busybox at
-`/bin/busybox` with every applet symlinked into `/bin` (and `init mount umount
-sh` into `/sbin`), your `init` at `/init`, an `/etc/fstab`, and empty
-`/dev /proc /sys /tmp /run`. Packing uses busybox's own `cpio` and `gzip`.
-Every ELF in `execs` (and `busybox`) is checked for a `PT_INTERP` header: a
-dynamically-linked binary fails the build, since the initramfs has no libc.
+Packs files into an initramfs (a gzip-compressed cpio archive).
+
+The archive gets:
+
+- a static busybox at `/bin/busybox`, with every applet linked into `/bin`
+  and `init`, `mount`, `umount` and `sh` linked into `/sbin`
+- your `init` at `/init`
+- an `/etc/fstab`
+- empty `/dev`, `/proc`, `/sys`, `/tmp` and `/run` directories
+
+Packing uses busybox's own `cpio` and `gzip`, not the host's.
+
+The initramfs has no libc, so dynamically linked programs can't run in it.
+The build checks every ELF file in `execs` (and busybox itself) and fails
+if one is dynamically linked.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `name` | name | required | Output is `<name>.cpio.gz`. |
-| `init` | label | required | Script or static binary installed at `/init` (0755). |
-| `files` | dict label → abs path | `{}` | Files installed 0644. |
-| `execs` | dict label → abs path | `{}` | Files installed 0755; ELFs must be static. |
-| `busybox` | label | `//firecracker:busybox_static` | Static busybox. |
+| `name` | name | required | The output is `<name>.cpio.gz`. |
+| `init` | label | required | Script or static binary to run as PID 1. Installed at `/init` with mode 0755. |
+| `files` | dict of label → absolute path | `{}` | Files to install with mode 0644. |
+| `execs` | dict of label → absolute path | `{}` | Files to install with mode 0755. ELF files must be static. |
+| `busybox` | label | `//firecracker:busybox_static` | The static busybox to use. |
 
-Tags: none added. Example: [Quick start](#quick-start).
+No tags are added. See [Quick start](#quick-start) for an example.
 
 #### firecracker_rootfs
 
-Builds an ext4 image with `mkfs.ext4 -d` (no root, mount or loop device). The
-image holds only what you list — no mount points — so to boot it as root,
-supply a PID 1, pass `rw init=/sbin/init` and have init create `/proc` etc.
-Also usable as a data disk (`extra_drive`). The genrule is `local` (the
-sparse image would be stored densely by caches).
+Builds an ext4 disk image with `mkfs.ext4 -d`. It doesn't need root, a
+mount, or a loop device.
+
+The image holds only the files you list. There are no `/proc` or `/dev`
+directories unless you add them. To boot it as the root filesystem:
+
+1. Install a PID 1, like busybox plus an init script.
+2. Add `rw init=/sbin/init` to the VM's kernel command line.
+3. Have your init create `/proc` and the other mount points it needs.
+
+You can also attach the image as a data disk with `extra_drive`.
+
+The build step runs locally and the image isn't cached. That's because the
+image is a sparse file, and a cache would store it at full size.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `name` | name | required | Output is `<name>.ext4`. |
-| `size_mb` | int | required | Image size in MiB (sparse). |
-| `label` | string | required | ext4 volume label (max 16 chars). |
-| `files` | dict label → abs path | `{}` | Files installed 0644. |
-| `execs` | dict label → abs path | `{}` | Files installed 0755. |
+| `name` | name | required | The output is `<name>.ext4`. |
+| `size_mb` | int | required | Image size in MiB. The file is sparse. |
+| `label` | string | required | ext4 volume label, 16 characters at most. |
+| `files` | dict of label → absolute path | `{}` | Files to install with mode 0644. |
+| `execs` | dict of label → absolute path | `{}` | Files to install with mode 0755. |
 
 ```starlark
 firecracker_rootfs(
@@ -179,39 +206,44 @@ firecracker_microvm(
 
 #### firecracker_microvm
 
-A runnable `sh_binary` (always tagged `manual`). At run time it resolves the
-kernel, boot image and firecracker binary through runfiles, writes a
-`vm.json` into a fresh temp dir and runs
-`firecracker --no-api --config-file vm.json` with the serial console on
-stdout. Exactly one of `initrd` / `rootfs` must be set.
+Creates a target you can `bazel run` to boot a VM. The VM's console prints to
+your terminal. The target is always tagged `manual`, so `//...` doesn't
+build it unless something depends on it.
+
+When you run it, it finds the kernel, the boot image and the firecracker
+binary in its runfiles. It writes a `vm.json` config into a new temp
+directory and runs `firecracker --no-api --config-file vm.json`.
+
+Set exactly one of `initrd` or `rootfs`. That picks how the VM boots.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `name` | name | required | The runnable target. |
+| `name` | name | required | The target you run. |
 | `kernel` | label | `//firecracker:vmlinux` | Uncompressed kernel ELF. |
-| `initrd` | label | `None` | cpio.gz initramfs (initrd mode). |
-| `rootfs` | label | `None` | ext4 root image, booted as `/dev/vda` with `root=/dev/vda` appended; copied first, so the VM may write it. |
-| `extra_drive` | label | `None` | Extra writable virtio-block disk, copied first; `/dev/vda` in initrd mode, `/dev/vdb` in rootfs mode. |
-| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE` | Kernel boot args. |
-| `vcpus` | int | `1` | vCPU count. |
-| `mem_mib` | int | `256` | Guest memory (MiB). |
-| `firecracker` | label | `//firecracker:firecracker` | **New.** A single executable file used as the VMM. Point it at your own build to override the pinned release. |
-| `visibility`, `tags` | | | Forwarded; `manual` is always added. |
+| `initrd` | label | `None` | Boot from this initramfs. |
+| `rootfs` | label | `None` | Boot from this ext4 image as `/dev/vda`. `root=/dev/vda` is added to the command line. The image is copied first, so the VM can write to it. |
+| `extra_drive` | label | `None` | One more writable disk, copied first. It's `/dev/vda` when booting from an initrd and `/dev/vdb` when booting from a rootfs. |
+| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE` | Kernel boot arguments. |
+| `vcpus` | int | `1` | Number of vCPUs. |
+| `mem_mib` | int | `256` | Guest memory in MiB. |
+| `firecracker` | label | `//firecracker:firecracker` | The firecracker binary to run. Point it at your own build to replace the pinned release. It must be a single executable file. |
+| `visibility`, `tags` | | | Passed through. `manual` is always added. |
 
-Runtime environment variables:
+These environment variables change what the VM does when you run it:
 
-| Variable | Effect |
+| Variable | What it does |
 | --- | --- |
-| `FC_TIMEOUT=<s>` | SIGKILL the VM after `<s>` seconds and exit 0. Non-timeout firecracker exit codes propagate. |
-| `FC_KEEP_WORK=1` | Keep the temp dir (prints its path) to inspect e.g. `extra.img` afterwards. |
-| `FC_TAP`, `FC_GUEST_MAC` | Attach a virtio-net NIC on host TAP `FC_TAP` (MAC default `06:00:AC:10:00:02`). |
-| `FC_CMDLINE_EXTRA` | Appended to the kernel cmdline (e.g. `ip=<ip>::<gw>:<mask>::eth0:off`). |
-| `FC_PERSIST_DISK=<path>` | Rootfs mode: attach this host file in place (not copied) as the last drive: `/dev/vdb`, or `/dev/vdc` after an `extra_drive`. |
-| `FC_BOOT_DISK=<path>`, `FC_ROOT_PART` | Boot from a partitioned disk instead; root defaults to `/dev/vda2`. |
-| `FC_FIRECRACKER=<path>` | Use this firecracker binary instead of the runfiles one (debugging). |
+| `FC_TIMEOUT=<s>` | Kills the VM after `<s>` seconds and exits 0. If firecracker exits on its own with an error, that error code comes through. |
+| `FC_KEEP_WORK=1` | Keeps the temp directory and prints its path, so you can look at files like `extra.img` afterwards. |
+| `FC_TAP`, `FC_GUEST_MAC` | Adds a network card connected to the host TAP device `FC_TAP`. The MAC defaults to `06:00:AC:10:00:02`. |
+| `FC_CMDLINE_EXTRA` | Adds arguments to the kernel command line, like `ip=<ip>::<gw>:<mask>::eth0:off`. |
+| `FC_PERSIST_DISK=<path>` | Rootfs mode only. Attaches this host file directly, without copying, as the last disk: `/dev/vdb`, or `/dev/vdc` if there's an `extra_drive`. Changes survive reboots. |
+| `FC_BOOT_DISK=<path>`, `FC_ROOT_PART` | Boots from a partitioned disk image instead. The root partition defaults to `/dev/vda2`. |
+| `FC_FIRECRACKER=<path>` | Runs this firecracker binary instead of the pinned one. Meant for debugging. |
 
-Example: [Quick start](#quick-start). The `firecracker` override is exercised
-by [`tests/unit`](tests/unit/BUILD.bazel) with a fake VMM:
+See [Quick start](#quick-start) for a basic example.
+[`tests/unit`](tests/unit/BUILD.bazel) uses the `firecracker` attribute to
+swap in a fake firecracker:
 
 ```starlark
 firecracker_microvm(
@@ -228,52 +260,69 @@ firecracker_microvm(
 
 #### firecracker_test
 
-An `sh_test` that runs a microvm with `FC_TIMEOUT=timeout_seconds`, streams
-the console into the test log, kills the VM as soon as every expected marker
-has appeared, and otherwise waits for it to exit or time out (a timeout kill
-is not by itself a failure). It then fails if any `expect_markers` string is
-missing or any `unexpected_markers` string is present (fixed-string match).
-Tags added: `requires-kvm`, `no-cache`.
+A test that boots a VM and checks what it prints on its console.
+
+Here's how it runs:
+
+1. It boots the VM with `FC_TIMEOUT=timeout_seconds` and copies the console
+   into the test log.
+2. Once every expected marker has shown up, it kills the VM. A passing test
+   usually takes a few seconds.
+3. If the markers don't all show up, it waits for the VM to exit or time
+   out. A timeout on its own doesn't fail the test.
+4. It fails if any `expect_markers` string is missing, or if any
+   `unexpected_markers` string appears. Matching is plain text, not regex.
+
+It adds the tags `requires-kvm` and `no-cache`.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | name | required | The test. |
-| `microvm` | label | required | A `firecracker_microvm` / `firecracker_container`. |
-| `expect_markers` | string list | `[]` | Must all appear on the console. |
-| `unexpected_markers` | string list | `[]` | Must not appear. |
-| `timeout_seconds` | int | `30` | Hard cap on VM wall time. |
-| `size` | string | `"medium"` | `sh_test` size. |
-| `visibility`, `tags` | | | Forwarded (plus the tags above). |
+| `microvm` | label | required | A `firecracker_microvm` or `firecracker_container`. |
+| `expect_markers` | list of strings | `[]` | All of these must appear. |
+| `unexpected_markers` | list of strings | `[]` | None of these may appear. |
+| `timeout_seconds` | int | `30` | The longest the VM may run. |
+| `size` | string | `"medium"` | Test size. |
+| `visibility`, `tags` | | | Passed through, with the tags above added. |
 
-Example: [Quick start](#quick-start).
+See [Quick start](#quick-start) for an example.
 
 #### firecracker_container
 
-Boots one OCI image as the whole guest. Layers are flattened (honoring `.wh.`
-whiteouts and opaque dirs) into an ext4 rootfs; a static busybox goes to
-`/sbin/busybox` and a generated `/sbin/init` mounts `/proc /sys /dev /tmp
-/run`, exports the image `Env` then `extra_env`, `cd`s to `WorkingDir`,
-prints `FIRECRACKER_CONTAINER_READY`, runs `Entrypoint + Cmd + extra_args`,
-prints `FIRECRACKER_CONTAINER_EXIT=<rc>` and reboots (so firecracker exits).
-Expands to `firecracker_microvm(name = name)` plus a `local` genrule
-`_<name>__rootfs`.
+Boots one OCI image as the whole VM.
+
+The image's layers are merged into an ext4 root filesystem. Deleted files
+and opaque directories are handled. A static busybox goes in at
+`/sbin/busybox`, and a generated `/sbin/init` replaces any init the image
+has. That init:
+
+1. mounts `/proc`, `/sys`, `/dev`, `/tmp` and `/run`
+2. sets the image's `Env`, then your `extra_env`
+3. changes to the image's `WorkingDir`
+4. prints `FIRECRACKER_CONTAINER_READY`
+5. runs `Entrypoint + Cmd + extra_args`
+6. prints `FIRECRACKER_CONTAINER_EXIT=<exit code>`
+7. reboots, which ends the VM
+
+You get a `firecracker_microvm` named `name`, plus a helper target
+`_<name>__rootfs` that builds the image.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `name` | name | required | The runnable microvm. |
-| `image` | label | required | `oci_image` or any OCI layout directory. |
-| `size_mb` | int | `512` | Rootfs size (MiB); must exceed the flattened image. |
+| `name` | name | required | The VM target. |
+| `image` | label | required | An `oci_image`, or any target that produces an OCI image layout directory. |
+| `size_mb` | int | `512` | Root filesystem size in MiB. It must be bigger than the merged image. |
 | `kernel` | label | `//firecracker:vmlinux` | Guest kernel. |
-| `extra_env` | dict string → string | `{}` | Exported after the image `Env` (overrides). |
-| `extra_args` | string list | `[]` | Appended after `Entrypoint + Cmd`. |
-| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE + " init=/sbin/init"` | Boot args. |
-| `vcpus` | int | `1` | vCPUs. |
-| `mem_mib` | int | `512` | Guest memory. |
+| `extra_env` | dict of string → string | `{}` | Set after the image's `Env`, so these win. |
+| `extra_args` | list of strings | `[]` | Added after `Entrypoint + Cmd`. |
+| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE + " init=/sbin/init"` | Kernel boot arguments. |
+| `vcpus` | int | `1` | Number of vCPUs. |
+| `mem_mib` | int | `512` | Guest memory in MiB. |
 | `busybox` | label | `//firecracker:busybox_static` | Copied to `/sbin/busybox`. |
-| `firecracker` | label | `//firecracker:firecracker` | **New.** VMM binary, as for `firecracker_microvm`. |
-| `visibility`, `tags` | | | Forwarded to the microvm. |
+| `firecracker` | label | `//firecracker:firecracker` | The firecracker binary, as in `firecracker_microvm`. |
+| `visibility`, `tags` | | | Passed through to the VM target. |
 
-From [`tests/container`](tests/container/BUILD.bazel) (rules_oci):
+This is from [`tests/container`](tests/container/BUILD.bazel), using rules_oci:
 
 ```starlark
 oci_image(
@@ -305,37 +354,45 @@ firecracker_test(
 
 #### firecracker_k3s_test
 
-Boots a single-node k3s server in a VM and runs your statically-linked guest
-test binary against it; see the [report contract](#k3s-test-report). The
-rootfs holds busybox, k3s at `/usr/local/bin/k3s` (with `kubectl`, `crictl`,
-`ctr` symlinks), the test binary at `/usr/local/bin/<test_binary's name>`
-and the PID 1 `init`. Creates `_<name>__rootfs` (local genrule),
-`_<name>__microvm` and the test. Tags added: `requires-kvm`, `no-cache`.
+Starts a single-node k3s server in a VM, then runs your test program inside
+the VM against it. Your program writes a JSON report, and the test passes or
+fails based on that. See [The k3s test report](#the-k3s-test-report) for the
+format.
+
+The VM's disk holds:
+
+- busybox
+- k3s at `/usr/local/bin/k3s`, with `kubectl`, `crictl` and `ctr` links
+- your test program at `/usr/local/bin/<its target name>`
+- the init script that runs it all
+
+You get three targets: the test, `_<name>__microvm`, and
+`_<name>__rootfs`. The test is tagged `requires-kvm` and `no-cache`.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | name | required | The test. |
-| `test_binary` | label | required | Static guest test binary (cgo-free `go_binary`, etc.). |
-| `scenario` | string | required | Written to `/etc/scenario`; passed as `--scenario=/etc/manifests/<scenario>.yaml`. |
-| `extra_manifests` | dict label → basename | `{}` | Copied to `/etc/manifests/`, `kubectl apply`'d once k3s is Ready. |
-| `extra_images` | dict label → basename | `{}` | Image tarballs copied to `/etc/images/`, auto-imported into k3s' containerd. |
-| `extra_files` | dict label → abs path | `{}` | Files installed 0644. |
-| `extra_execs` | dict label → abs path | `{}` | Files installed 0755. |
-| `timeout_seconds` | int | `300` | Hard cap on VM wall time. |
-| `vcpus` | int | `2` | vCPUs. |
-| `mem_mib` | int | `2048` | Guest memory. |
-| `size_mb` | int | `2048` | Rootfs size. |
+| `test_binary` | label | required | Your test program. It must be static, like a `go_binary` built without cgo. |
+| `scenario` | string | required | A scenario name. It's written to `/etc/scenario` and passed as `--scenario=/etc/manifests/<scenario>.yaml`. |
+| `extra_manifests` | dict of label → file name | `{}` | Copied into `/etc/manifests/` and applied with `kubectl apply` once k3s is ready. |
+| `extra_images` | dict of label → file name | `{}` | Image tarballs, copied into `/etc/images/` and loaded into k3s before it starts. |
+| `extra_files` | dict of label → absolute path | `{}` | Files to install with mode 0644. |
+| `extra_execs` | dict of label → absolute path | `{}` | Files to install with mode 0755. |
+| `timeout_seconds` | int | `300` | The longest the VM may run. |
+| `vcpus` | int | `2` | Number of vCPUs. k3s needs at least 2. |
+| `mem_mib` | int | `2048` | Guest memory in MiB. |
+| `size_mb` | int | `2048` | Disk size in MiB. |
 | `kernel` | label | `//firecracker:vmlinux` | Guest kernel. |
-| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE` | Boot args. |
+| `kernel_cmdline` | string | `DEFAULT_KERNEL_CMDLINE` | Kernel boot arguments. |
 | `busybox` | label | `//firecracker:busybox_static` | Static busybox. |
 | `k3s` | label | `//firecracker:k3s_binary` | Static k3s. |
-| `init` | label | `//firecracker:k3s_init` | `/sbin/init`. |
-| `firecracker` | label | `//firecracker:firecracker` | **New.** VMM binary. |
-| `size` | string | `"enormous"` | `sh_test` size. |
-| `visibility`, `tags` | | | Forwarded (plus the tags above). |
+| `init` | label | `//firecracker:k3s_init` | The init script, installed at `/sbin/init`. |
+| `firecracker` | label | `//firecracker:firecracker` | The firecracker binary, as in `firecracker_microvm`. |
+| `size` | string | `"enormous"` | Test size. |
+| `visibility`, `tags` | | | Passed through, with the tags above added. |
 
-From [`examples/k3s_smoke`](examples/k3s_smoke/BUILD.bazel); see
-[`tests/k3s`](tests/k3s/BUILD.bazel) for every `extra_*` attribute in use:
+This is from [`examples/k3s_smoke`](examples/k3s_smoke/BUILD.bazel).
+[`tests/k3s`](tests/k3s/BUILD.bazel) shows every `extra_*` attribute in use.
 
 ```starlark
 go_binary(
@@ -353,29 +410,48 @@ firecracker_k3s_test(
 
 #### firecracker_cluster_test
 
-Creates a Linux bridge (host side `subnet_gw`) and a TAP per node, boots every
-node of `vm` concurrently with `ip=<IP>::<GW>:<MASK>::eth0:off <EXTRA>` on its
-cmdline, waits for all to exit (or `timeout_seconds`), tears the network
-down, and passes iff `expect_marker` is in any node's console log. Runs
-`local` (unsandboxed: host netns, `sudo -n ip ...`, iptables `FORWARD` accept
-for the bridge, `/dev/kvm`). Tags added: `requires-kvm no-cache local
-no-sandbox manual` — so `//...` skips it; list it in a `test_suite` or name
-it explicitly. Without `/dev/kvm` or passwordless sudo it SKIPs (exit 0),
-unless `FC_NO_SKIP=1` is in the test env, which turns the SKIP into a failure.
+Boots several copies of one VM on a shared network and passes if any of
+them prints `expect_marker`.
+
+Here's how it runs:
+
+1. It creates a Linux bridge on the host, with the address `subnet_gw`, and
+   one TAP device per node.
+2. It boots every node at the same time. Each one gets
+   `ip=<IP>::<GW>:<MASK>::eth0:off <EXTRA>` on its kernel command line.
+   See [Cluster node specs](#cluster-node-specs).
+3. It waits for all the VMs to exit, or for `timeout_seconds`.
+4. It removes the bridge and TAP devices.
+5. It passes if `expect_marker` is in any node's console log.
+
+The network setup needs root, so this test runs outside Bazel's sandbox
+and calls `sudo -n ip ...` and `iptables`. It's tagged `requires-kvm`,
+`no-cache`, `local`, `no-sandbox` and `manual`.
+
+Because of `manual`, `bazel test //...` won't run it. Name it directly or
+put it in a `test_suite`.
+
+If `/dev/kvm` or passwordless sudo is missing, the test prints SKIP and
+passes. Set `FC_NO_SKIP=1` in the test environment to make that a failure,
+which is what you want in CI.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | name | required | The test. |
-| `vm` | label | required | `firecracker_microvm` every node boots. |
-| `nodes` | string list | required | [Node specs](#cluster-node-specs). |
-| `expect_marker` | string | required | Must appear in some node's log. |
-| `leader_idx` | string | required | Node whose log tail is printed. |
-| `subnet_gw` | string | `"10.211.55.1/24"` | Bridge address (CIDR) = guests' gateway. |
-| `timeout_seconds` | int | `360` | Per-VM cap. |
-| `size` | string | `"enormous"` | `sh_test` size. |
-| `visibility`, `tags` | | | Forwarded (plus the tags above). |
+| `vm` | label | required | The `firecracker_microvm` that every node boots. |
+| `nodes` | list of strings | required | One [node spec](#cluster-node-specs) per VM. |
+| `expect_marker` | string | required | Must appear in at least one node's log. |
+| `leader_idx` | string | required | The node whose log is printed at the end. |
+| `subnet_gw` | string | `"10.211.55.1/24"` | The bridge address in CIDR form. It's also the VMs' gateway. |
+| `timeout_seconds` | int | `360` | The longest each VM may run. |
+| `size` | string | `"enormous"` | Test size. |
+| `visibility`, `tags` | | | Passed through, with the tags above added. |
 
-From [`tests/cluster`](tests/cluster/BUILD.bazel):
+If two cluster tests might run at the same time, give them different
+subnets.
+
+This is from [`tests/cluster`](tests/cluster/BUILD.bazel). Two VMs ping each
+other:
 
 ```starlark
 firecracker_cluster_test(
@@ -394,24 +470,33 @@ firecracker_cluster_test(
 
 #### firecracker_renumber_test
 
-Two phases with the same per-node persistent disks: phase 1 boots `nodes1` on
-`gw1`, each node with a 2 GiB ext4 disk at `/dev/vdb` (created once per IDX);
-phase 2 boots `nodes2` (same IDXs and MACs, new IPs) on `gw2`. Passes iff
-`expect_marker` appears in a phase-2 log. `vm` must be rootfs-mode. Same
-tags/SKIP rules as `firecracker_cluster_test`.
+Checks that a cluster recovers when its nodes come back on new IP
+addresses. It runs in two phases, and each node keeps its own disk across
+both.
+
+1. Phase 1 boots `nodes1` on a bridge at `gw1`. Each node gets a 2 GiB ext4
+   data disk at `/dev/vdb`.
+2. Phase 2 boots `nodes2` on a bridge at `gw2`. The nodes keep the same
+   IDs and MACs but get new IPs. Each one gets its disk from phase 1 back,
+   matched by IDX.
+3. The test passes if `expect_marker` shows up in a phase 2 log.
+
+`vm` has to boot from a rootfs, because the data disk only works in that
+mode. Tags, SKIP and `FC_NO_SKIP` work the same as in
+`firecracker_cluster_test`.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | name | required | The test. |
-| `vm` | label | required | Rootfs-mode microvm. |
-| `nodes1`, `nodes2` | string list | required | Phase 1 / 2 node specs. |
-| `gw1`, `gw2` | string | required | Phase 1 / 2 bridge address (CIDR). |
-| `expect_marker` | string | required | Must appear in a phase-2 log. |
-| `timeout1`, `timeout2` | int | `240`, `300` | Per-VM cap per phase. |
-| `size` | string | `"enormous"` | `sh_test` size. |
-| `visibility`, `tags` | | | Forwarded. |
+| `vm` | label | required | A `firecracker_microvm` that boots from a rootfs. |
+| `nodes1`, `nodes2` | list of strings | required | Node specs for phase 1 and phase 2. |
+| `gw1`, `gw2` | string | required | Bridge address for each phase, in CIDR form. |
+| `expect_marker` | string | required | Must appear in a phase 2 log. |
+| `timeout1`, `timeout2` | int | `240`, `300` | The longest each VM may run, per phase. |
+| `size` | string | `"enormous"` | Test size. |
+| `visibility`, `tags` | | | Passed through. |
 
-From [`tests/cluster`](tests/cluster/BUILD.bazel):
+This is from [`tests/cluster`](tests/cluster/BUILD.bazel):
 
 ```starlark
 firecracker_renumber_test(
@@ -435,44 +520,55 @@ firecracker_renumber_test(
 
 #### firecracker_install_cluster_test
 
-Phase 1, per node: a sparse 5 GiB disk attached with `sudo losetup -fP`, a
-`settings.ini`
+Checks an installer end to end. It installs each node to a blank disk,
+then boots the cluster from those disks.
 
-```ini
-[node]
-role = server
-[cluster]
-cluster_secret = <secret>
-[install]
-target_disk = /dev/loopN
-wipe_confirm = yes-i-am-sure
-```
+Phase 1 runs once per node:
 
-and `sudo <installer> --settings <settings.ini> --rootfs-image <rootfs>`,
-which must partition the disk and put a bootable root filesystem on
-partition 2. Phase 2 boots each disk (`root=/dev/vda2`) on a bridge at `gw`
-and passes iff `expect_marker` appears. `vm` supplies kernel, cmdline and
-machine size only. `installer` may be a `go_binary` or any single-file
-executable (e.g. `sh_binary`). Needs `losetup sgdisk mkfs.fat mkfs.ext4
-mkfs.exfat` on the host (SKIP otherwise, failure with `FC_NO_SKIP=1`). Same
-tags as `firecracker_cluster_test`.
+1. Create a sparse 5 GiB disk image and attach it with `sudo losetup -fP`.
+2. Write a `settings.ini` like this:
+
+   ```ini
+   [node]
+   role = server
+   [cluster]
+   cluster_secret = <secret>
+   [install]
+   target_disk = /dev/loopN
+   wipe_confirm = yes-i-am-sure
+   ```
+
+3. Run `sudo <installer> --settings <settings.ini> --rootfs-image <rootfs>`.
+   Your installer has to partition the disk and put a bootable root
+   filesystem on partition 2.
+
+Phase 2 boots every node from its disk (`root=/dev/vda2`) on a bridge at
+`gw`. The test passes if `expect_marker` shows up in a log.
+
+`vm` only supplies the kernel, the command line and the machine size. Its
+own boot image isn't used. `installer` can be a `go_binary` or any other
+single-file program, like an `sh_binary`.
+
+The host also needs `losetup`, `sgdisk`, `mkfs.fat`, `mkfs.ext4` and
+`mkfs.exfat`. Without them the test skips, or fails with `FC_NO_SKIP=1`.
+Tags work the same as in `firecracker_cluster_test`.
 
 | Attribute | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | name | required | The test. |
-| `vm` | label | required | Kernel/cmdline/size donor microvm. |
-| `installer` | label | required | Installer executable. |
-| `rootfs` | label | required | Root image handed to the installer. |
-| `nodes` | string list | required | Node specs. |
-| `expect_marker` | string | required | Must appear in a phase-2 log. |
-| `gw` | string | `"10.211.55.1/24"` | Bridge address (CIDR). |
-| `secret` | string | 64 hex chars | `cluster_secret` in each settings.ini. |
-| `timeout_seconds` | int | `360` | Phase-2 per-VM cap. |
-| `size` | string | `"enormous"` | `sh_test` size. |
-| `visibility`, `tags` | | | Forwarded. |
+| `vm` | label | required | A `firecracker_microvm` to take the kernel, command line and size from. |
+| `installer` | label | required | Your installer program. |
+| `rootfs` | label | required | The root filesystem image passed to the installer. |
+| `nodes` | list of strings | required | Node specs. |
+| `expect_marker` | string | required | Must appear in a phase 2 log. |
+| `gw` | string | `"10.211.55.1/24"` | Bridge address in CIDR form. |
+| `secret` | string | 64 hex characters | Written as `cluster_secret` in each `settings.ini`. |
+| `timeout_seconds` | int | `360` | The longest each VM may run in phase 2. |
+| `size` | string | `"enormous"` | Test size. |
+| `visibility`, `tags` | | | Passed through. |
 
-[`tests/cluster`](tests/cluster/BUILD.bazel) drives it with a generic
-`sgdisk` + `dd` installer ([`installer.sh`](tests/cluster/installer.sh)):
+[`tests/cluster`](tests/cluster/BUILD.bazel) tests it with a small `sgdisk`
+and `dd` installer, [`installer.sh`](tests/cluster/installer.sh):
 
 ```starlark
 firecracker_install_cluster_test(
@@ -493,64 +589,68 @@ firecracker_install_cluster_test(
 
 ### Public targets
 
-All in `@rules_firecracker//firecracker`:
+All of these are in `@rules_firecracker//firecracker`.
 
-| Target | What |
+| Target | What it is |
 | --- | --- |
-| `:defs.bzl`, `:defs` | The macros; `:defs` is the `bzl_library` for your own stardoc. |
-| `:firecracker` | Firecracker v1.17.0 from the upstream release tarball (sha256-pinned); x86_64, or aarch64 on an aarch64 target platform. |
-| `:vmlinux` | Guest kernel: Linux 6.1.155 built from the kernel.org tarball with [`vmlinux-6.1.config`](firecracker/private/vmlinux-6.1.config) (firecracker's CI config + `CONFIG_FUSE_FS=y`, `EFI_PARTITION`, `DUMMY`, `BRIDGE`, `IP_PNP`). Sandboxed, cacheable; uses the host compiler. Output `vmlinux.bin`. |
-| `:busybox_static` | busybox 1.35.0 x86_64 musl, static. |
+| `:defs.bzl`, `:defs` | The macros. Use `:defs` (a `bzl_library`) if you generate your own docs with stardoc. |
+| `:firecracker` | Firecracker v1.17.0, from the official release, checked by sha256. It's the x86_64 build, or aarch64 when you build for aarch64. |
+| `:vmlinux` | The guest kernel, Linux 6.1.155. It's built from the kernel.org source with [`vmlinux-6.1.config`](firecracker/private/vmlinux-6.1.config): firecracker's CI config plus FUSE, EFI partitions, dummy and bridge interfaces, and kernel IP config. It uses the host's compiler but is cached like any other build step. The output file is `vmlinux.bin`. |
+| `:busybox_static` | busybox 1.35.0, static x86_64 musl build. |
 | `:k3s_binary` | k3s v1.30.4+k3s1, static. |
-| `:jq` | jq 1.8.1, static (used by the k3s test launcher). |
-| `:k3s_init` | Default PID 1 of `firecracker_k3s_test` ([contract](#k3s-test-report)). |
-| `:k3s_cluster_init` | PID 1 for multi-node k3s nodes ([cmdline fields](#k3s-cluster-node-cmdline)). |
-| `:mkinitramfs`, `:mkrootfs`, `:mkcontainerfs`, `:mkk3srootfs`, `:mksystemdrootfs`, `:mknoderootfs`, `:mknodeimage`, `:gen_test`, `:gen_k3s_test` | Tools below. |
+| `:jq` | jq 1.8.1, static. The k3s test uses it to read reports. |
+| `:k3s_init` | The init script for `firecracker_k3s_test`. See [The k3s test report](#the-k3s-test-report). |
+| `:k3s_cluster_init` | The init script for multi-node k3s VMs. See [k3s cluster settings](#k3s-cluster-settings). |
+| `:mkinitramfs`, `:mkrootfs`, `:mkcontainerfs`, `:mkk3srootfs`, `:mksystemdrootfs`, `:mknoderootfs`, `:mknodeimage`, `:gen_test`, `:gen_k3s_test` | The tools listed below. |
 
 ### Image builder tools
 
-`sh_binary` tools the macros drive; call them from your own genrules with
-`$(execpath @rules_firecracker//firecracker:<tool>)`. `SRC=DST` flags are
-repeatable; `DST` paths are absolute unless noted. All exit 2 on usage errors.
+These are the scripts the macros run. You can call them from your own
+genrules with `$(execpath @rules_firecracker//firecracker:<tool>)`.
+
+You can repeat any `SRC=DST` flag. `DST` is an absolute path unless the
+table says otherwise. Every tool exits with code 2 if you call it wrong.
 
 | Tool | Flags |
 | --- | --- |
-| `mkinitramfs` | `--out PATH --busybox PATH --init PATH [--file SRC=DST] [--exec SRC=DST]` — see `firecracker_initramfs`. |
+| `mkinitramfs` | `--out PATH --busybox PATH --init PATH [--file SRC=DST] [--exec SRC=DST]`. Works like `firecracker_initramfs`. |
 | `mkrootfs` | `--out PATH --size-mb N --label STR [--file SRC=DST] [--exec SRC=DST]` |
 | `mkcontainerfs` | `--out PATH --image-dir OCI_LAYOUT --busybox PATH --size-mb N --label STR [--extra-env K=V] [--extra-arg ARG]` |
-| `mkk3srootfs` | `--out PATH --busybox PATH --k3s PATH --init PATH --test-binary PATH --test-binary-name NAME --scenario NAME --size-mb N --label STR [--file SRC=DST] [--exec SRC=DST] [--manifest SRC=BASENAME] [--image SRC=BASENAME]` |
-| `mksystemdrootfs` | `--out --k3s --openfactoryd --rig-script --rig-unit --size-mb --label [--base-tag TAG] [--exec SRC=DST] [--file SRC=DST] [--image SRC=BASENAME]` — Debian+systemd rootfs for systemd-managed rigs. Needs docker/podman + fakeroot. |
-| `mknoderootfs` | `--out --k3s --openfactoryd --service --provision-script --provision-unit --nodewatch-script --nodewatch-unit --size-mb --label [--base-tag TAG]` — production Debian+systemd node rootfs. Needs docker/podman + fakeroot. |
-| `mknodeimage` | same flags as `mknoderootfs` — self-contained Debian node image with its own kernel. Needs docker/podman. |
-| `gen_test` | `--out PATH --runner-rloc RLOC --timeout N [--expect M] [--unexpect M]` — emits a `firecracker_test` script. |
-| `gen_k3s_test` | `--out PATH --runner-rloc RLOC --timeout N [--jq-rloc RLOC]` — emits a `firecracker_k3s_test` script. |
+| `mkk3srootfs` | `--out PATH --busybox PATH --k3s PATH --init PATH --test-binary PATH --test-binary-name NAME --scenario NAME --size-mb N --label STR [--file SRC=DST] [--exec SRC=DST] [--manifest SRC=FILENAME] [--image SRC=FILENAME]` |
+| `mksystemdrootfs` | `--out --k3s --openfactoryd --rig-script --rig-unit --size-mb --label [--base-tag TAG] [--exec SRC=DST] [--file SRC=DST] [--image SRC=FILENAME]`. Builds a Debian root filesystem with systemd. Needs docker or podman, and fakeroot. |
+| `mknoderootfs` | `--out --k3s --openfactoryd --service --provision-script --provision-unit --nodewatch-script --nodewatch-unit --size-mb --label [--base-tag TAG]`. Builds a Debian node root filesystem with systemd. Needs docker or podman, and fakeroot. |
+| `mknodeimage` | Same flags as `mknoderootfs`. Builds a Debian node image that has its own kernel. Needs docker or podman. |
+| `gen_test` | `--out PATH --runner-rloc RLOC --timeout N [--expect M] [--unexpect M]`. Writes a `firecracker_test` script. |
+| `gen_k3s_test` | `--out PATH --runner-rloc RLOC --timeout N [--jq-rloc RLOC]`. Writes a `firecracker_k3s_test` script. |
 
-`mksystemdrootfs`, `mknoderootfs` and `mknodeimage` are specific to
-openfactory node images (they bake in an
-`openfactoryd` binary and its units) and are not exercised by this repo's
-tests. Each script's header documents its flags in full.
+`mksystemdrootfs`, `mknoderootfs` and `mknodeimage` exist for openfactory's
+node images.
+They bake in an `openfactoryd` binary and its systemd units, and this repo's
+tests don't cover them. The comment at the top of each script lists every
+flag.
 
-## Guest-side contracts
+## What guests print
 
 ### Console markers
 
-Tests assert on the serial console (`console=ttyS0`), so guests report by
-printing lines. The generic macros look for whatever strings you choose; the
-bundled guests print:
+Tests read the VM's serial console (`console=ttyS0`). So a guest reports
+results by printing lines. With the generic macros you pick the strings.
+The guests that ship with these rules print these:
 
-| Source | Markers |
+| Guest | Markers |
 | --- | --- |
 | `firecracker_container` init | `FIRECRACKER_CONTAINER_READY`, `FIRECRACKER_CONTAINER_EXIT=<rc>` |
 | `k3s_init` | `K3S_BOOTING`, `K3S_READY` or `K3S_FAILED`, `SCENARIO_BEGIN:<scenario>`, `===REPORT_BEGIN===` … `===REPORT_END===`, `SCENARIO_END:<scenario>:<rc>`, `K3S_POWEROFF` |
 | `k3s_cluster_init` | `K3SC_BOOTING`, `K3SC_ROLE:<role>:<node>:<ip>`, `K3SC_AGENT_UP`, `K3SC_AGENT_EXITED`, `K3SC_CLUSTER_READY nodes=<n>` or `K3SC_CLUSTER_FAILED` |
 
-End a guest with `reboot -f` so firecracker exits (needs `reboot=k`, part of
-`DEFAULT_KERNEL_CMDLINE`).
+When your guest is done, have it run `reboot -f`. That ends the VM, as long
+as `reboot=k` is on the kernel command line. It's in
+`DEFAULT_KERNEL_CMDLINE`.
 
-### k3s test report
+### The k3s test report
 
-`k3s_init` waits for the node to be Ready (up to 240 s), applies
-`/etc/manifests/*.yaml`, then runs
+`k3s_init` waits up to 240 seconds for the node to be ready. Then it applies
+`/etc/manifests/*.yaml` and runs your test program like this:
 
 ```
 /usr/local/bin/<test_binary> --scenario=/etc/manifests/<scenario>.yaml \
@@ -558,8 +658,8 @@ End a guest with `reboot -f` so firecracker exits (needs `reboot=k`, part of
     --kubeconfig=/etc/rancher/k3s/k3s.yaml --namespace=default
 ```
 
-and prints `/tmp/report.json` between `===REPORT_BEGIN===` and
-`===REPORT_END===`. The report must be a JSON object:
+Afterwards it prints `/tmp/report.json` between `===REPORT_BEGIN===` and
+`===REPORT_END===`. The report has to be a JSON object like this:
 
 ```json
 {
@@ -571,45 +671,55 @@ and prints `/tmp/report.json` between `===REPORT_BEGIN===` and
 }
 ```
 
-The test passes iff `pass_conditions` is a non-empty array and every entry
-has `"passed": true` (boolean). Failing entries are printed as
-`id<TAB>label<TAB>error`. If the binary writes no report, `k3s_init`
-synthesizes one with a failing `harness.exit` entry; if k3s never gets Ready,
-one with a failing `boot.k3s-ready`. The report and console log are saved as
-`report.json` and `serial.log` in the test's undeclared outputs
-(`bazel-testlogs/<pkg>/<name>/test.outputs/`), and the report is also copied
-to `$SCENARIO_REPORT_PATH` when that env var is set and writable.
+The test passes only if `pass_conditions` has at least one entry and every
+entry has `"passed": true`. That has to be the JSON boolean, not a string.
+Each failing entry is printed as `id`, `label` and `error`, separated by tabs.
 
-k3s runs with `--disable=traefik,servicelb,metrics-server`, flannel
-`host-gw` on a dummy interface (`10.42.0.10`), and no network access, so
-images must come from `extra_images`.
+Some failures get a report written for you:
+
+- If your program writes no report, `k3s_init` writes one with a failing
+  `harness.exit` entry.
+- If k3s never becomes ready, it writes one with a failing `boot.k3s-ready`
+  entry.
+
+You'll find the report and the console log as `report.json` and
+`serial.log` in `bazel-testlogs/<package>/<name>/test.outputs/`. If
+`$SCENARIO_REPORT_PATH` is set and writable, the report is copied there
+too.
+
+k3s runs with `--disable=traefik,servicelb,metrics-server`, and flannel uses
+`host-gw` on a dummy interface (`10.42.0.10`). The VM has no network
+access, so every image it needs has to come in through `extra_images`.
 
 ### Cluster node specs
 
-`nodes` entries are `"IDX,IP,MAC,EXTRA"`:
+Each entry in `nodes` has four comma-separated fields, `"IDX,IP,MAC,EXTRA"`:
 
-- `IDX` — small integer; console log `vm<IDX>.log`, TAP `fct<pid>_<IDX>`.
-  Renumber phases match nodes (and their persistent disks) by IDX.
-- `IP` — guest IPv4 address inside `subnet_gw`'s network.
-- `MAC` — guest MAC, e.g. `06:00:AC:10:00:11`.
-- `EXTRA` — extra kernel cmdline arguments, space-separated (no commas).
+- `IDX` is a small number that names the node. Its console log is
+  `vm<IDX>.log` and its TAP device is `fct<pid>_<IDX>`. The renumber test
+  uses it to give each node its disk back.
+- `IP` is the guest's IPv4 address. It has to be inside `subnet_gw`'s
+  network.
+- `MAC` is the guest's MAC address, like `06:00:AC:10:00:11`.
+- `EXTRA` is more kernel command line arguments, separated by spaces. It
+  can't contain commas.
 
-Each node's cmdline gets `ip=<IP>::<GW>:<MASK>::eth0:off <EXTRA>`; the kernel
-(`CONFIG_IP_PNP`) configures `eth0` before init runs.
+Each node's kernel command line gets `ip=<IP>::<GW>:<MASK>::eth0:off
+<EXTRA>`. The kernel sets up `eth0` before init starts.
 
-### k3s cluster node cmdline
+### k3s cluster settings
 
-`k3s_cluster_init` reads these `EXTRA` fields:
+`k3s_cluster_init` reads these settings from a node's `EXTRA` field:
 
-| Field | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `ofd.role=server\|agent` | `server` | k3s role. |
-| `ofd.node=<name>` | `node0` | Node name / hostname. |
-| `ofd.token=<token>` | `ofdclustertoken` | Shared cluster token. |
-| `ofd.server=<ip>` | — | Agents: server to join (`https://<ip>:6443`). |
-| `ofd.expect=<n>` | `1` | Server: Ready nodes to wait for before `K3SC_CLUSTER_READY`. |
+| `ofd.role=server\|agent` | `server` | The node's k3s role. |
+| `ofd.node=<name>` | `node0` | Node name and hostname. |
+| `ofd.token=<token>` | `ofdclustertoken` | The token every node shares. |
+| `ofd.server=<ip>` | none | For agents: the server to join, at `https://<ip>:6443`. |
+| `ofd.expect=<n>` | `1` | For the server: how many ready nodes to wait for before it prints `K3SC_CLUSTER_READY`. |
 
-From [`tests/cluster`](tests/cluster/BUILD.bazel) (a 3-node cluster):
+This 3-node cluster is from [`tests/cluster`](tests/cluster/BUILD.bazel):
 
 ```starlark
 firecracker_cluster_test(
@@ -629,7 +739,8 @@ firecracker_cluster_test(
 
 ## Running in GitHub Actions
 
-GitHub-hosted x64 Ubuntu runners support KVM. A consumer workflow:
+GitHub's hosted x64 Ubuntu runners support KVM. You just have to turn it on.
+Here's a workflow you can copy:
 
 ```yaml
 name: CI
@@ -655,63 +766,74 @@ jobs:
         with:
           bazelisk-cache: true
           repository-cache: true
-          disk-cache: ${{ github.workflow }}   # caches the ~10 min kernel build
+          disk-cache: ${{ github.workflow }}   # keeps the ~10 min kernel build
       - run: bazel test --config=kvm //...
 ```
 
-Cluster tests (tagged `manual`) additionally need passwordless sudo — which
-hosted runners have — and `gdisk dosfstools exfatprogs` for the install rig;
-run them with `--test_env=FC_NO_SKIP=1` so a broken prerequisite fails
-instead of skipping. This repo's own [workflow](.github/workflows/ci.yml)
-builds the kernel once in a dedicated job and shares it via
-`actions/cache`.
+The cluster tests are tagged `manual`, so you have to name them. They need
+passwordless sudo, which hosted runners have. The install test also needs
+the `gdisk`, `dosfstools` and `exfatprogs` packages.
+
+Run them with `--test_env=FC_NO_SKIP=1`. Then a missing prerequisite fails
+the build instead of quietly skipping.
+
+This repo's own [workflow](.github/workflows/ci.yml) builds the kernel once
+in its own job and shares it with the other jobs through `actions/cache`.
 
 ## Host requirements
 
-- x86_64 Linux with `/dev/kvm` readable/writable by the build user. Nothing
-  else is needed to *run* a VM: firecracker, busybox, k3s and jq are pinned
-  downloads.
-- `//firecracker:vmlinux` compiles the kernel with the host toolchain:
-  `gcc make bc flex bison perl` and the `libelf-dev libssl-dev` headers
-  (Debian: `build-essential flex bison bc libelf-dev libssl-dev`). ~3 min
-  on 32 cores, ~10-15 min on a 4-core runner; it is a normal (non-`local`)
-  action, so a disk/remote cache keeps it.
-- bash, coreutils, util-linux (`setsid`), GNU `tar`/`sed`/`awk`/`grep`.
-- e2fsprogs >= 1.43 (`mkfs.ext4 -d`) for every ext4 image (`firecracker_rootfs`,
-  `firecracker_container`, `firecracker_k3s_test`).
-- `firecracker_container`: python3 (image config parsing), and `zstd` for
-  zstd-compressed layers.
-- Multi-VM tests: passwordless `sudo` for `ip` (bridge/TAP) and `iptables`;
-  the install rig also `losetup`, `sgdisk` (gdisk), `mkfs.fat` (dosfstools),
-  `mkfs.exfat` (exfatprogs).
-- `mksystemdrootfs`/`mknoderootfs`/`mknodeimage`: docker or podman, fakeroot.
+To run a VM, the host only needs x86_64 Linux and a `/dev/kvm` your user can
+read and write. firecracker, busybox, k3s and jq are all pinned downloads.
 
-On Ubuntu 24.04, bazel's sandbox needs
-`sysctl kernel.apparmor_restrict_unprivileged_userns=0`.
+Other things need more:
 
-## Repository layout and development
+- **Building the kernel** (`//firecracker:vmlinux`) uses the host's
+  compiler. You need `gcc`, `make`, `bc`, `flex`, `bison`, `perl`, and the
+  `libelf` and `libssl` headers. On Debian or Ubuntu, install
+  `build-essential flex bison bc libelf-dev libssl-dev`. It takes about 3
+  minutes on 32 cores, or 10 to 15 minutes on a 4-core runner. Bazel caches
+  it like any other step, so a disk or remote cache saves you from doing it
+  again.
+- **The scripts** need bash, coreutils, util-linux (for `setsid`), and GNU
+  `tar`, `sed`, `awk` and `grep`.
+- **Every ext4 image** (`firecracker_rootfs`, `firecracker_container`,
+  `firecracker_k3s_test`) needs e2fsprogs 1.43 or newer, for `mkfs.ext4 -d`.
+- **`firecracker_container`** needs python3 to read the image config, and
+  `zstd` if a layer is zstd-compressed.
+- **The cluster tests** need passwordless `sudo` for `ip` and `iptables`.
+  The install test also needs `losetup`, `sgdisk` (from gdisk), `mkfs.fat`
+  (from dosfstools) and `mkfs.exfat` (from exfatprogs).
+- **`mksystemdrootfs`, `mknoderootfs` and `mknodeimage`** need docker or
+  podman, and fakeroot.
+
+On Ubuntu 24.04, Bazel's sandbox doesn't work until you run
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+
+## Working on this repo
 
 ```
-firecracker/defs.bzl      public macros (load this)
-firecracker/BUILD.bazel   public targets
-firecracker/private/      implementation: macros.bzl, scripts, templates, kernel config
-examples/                 small usage examples (tested)
-tests/unit/               builders, generators, launcher — no KVM needed
-tests/vm/                 single-VM boots, timing and failure paths
+firecracker/defs.bzl      the public macros (load this one)
+firecracker/BUILD.bazel   the public targets
+firecracker/private/      everything else: macros.bzl, scripts, templates, kernel config
+examples/                 small examples, which are also tests
+tests/unit/               tests for the tools and scripts; no KVM needed
+tests/vm/                 single-VM boots, timeouts and failure cases
 tests/container/          firecracker_container with a rules_oci image
-tests/k3s/                firecracker_k3s_test extras + failing-report path
-tests/cluster/            multi-VM rigs (test_suite :cluster)
-e2e/smoke/                separate workspace consuming the module externally
-docs/                     stardoc output (bazel run //docs:update)
-.bcr/                     Bazel Central Registry publishing templates
+tests/k3s/                firecracker_k3s_test options and a failing report
+tests/cluster/            multi-VM tests (test_suite :cluster)
+e2e/smoke/                a separate workspace that uses this module as a dependency
+docs/                     generated API docs
+.bcr/                     templates for publishing to the Bazel Central Registry
 ```
+
+Common commands:
 
 ```sh
-bazel test //tests/unit/... //docs/...          # no KVM
-bazel test --config=kvm //...                   # all non-manual tests
-bazel test --config=ci //tests/cluster:cluster  # multi-VM (sudo)
+bazel test //tests/unit/... //docs/...          # no KVM needed
+bazel test --config=kvm //...                   # every test that isn't manual
+bazel test --config=ci //tests/cluster:cluster  # multi-VM tests; needs sudo
 (cd e2e/smoke && bazel test --config=kvm //...)
-bazel run //docs:update                         # after changing a docstring
+bazel run //docs:update                         # run after you change a docstring
 ```
 
 ## License

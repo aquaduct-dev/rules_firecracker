@@ -1,4 +1,4 @@
-"""Public API of rules_firecracker: build and test Firecracker microVMs.
+"""Bazel rules for booting real Linux VMs in your tests, using Firecracker.
 
 ```starlark
 load(
@@ -9,11 +9,12 @@ load(
 )
 ```
 
-Images: `firecracker_initramfs`, `firecracker_rootfs`.
-VMs: `firecracker_microvm`, `firecracker_container`.
-Tests: `firecracker_test`, `firecracker_k3s_test`, and the multi-VM
-`firecracker_cluster_test`, `firecracker_renumber_test`,
-`firecracker_install_cluster_test`.
+To build boot images, use `firecracker_initramfs` or `firecracker_rootfs`.
+To get a VM you can run, use `firecracker_microvm`, or `firecracker_container`
+for an OCI image. For tests, use `firecracker_test` for one VM,
+`firecracker_k3s_test` to test against k3s, and `firecracker_cluster_test`,
+`firecracker_renumber_test` or `firecracker_install_cluster_test` for
+several VMs on one network.
 """
 
 load(
