@@ -1,35 +1,35 @@
-<!-- docdaemon ts:2026-10-10T19:07:04Z hash:07c370520eb151a2 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-15T22:44:56Z hash:a9105e50fd2c65e0 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory provides the public Bazel targets and Starlark macros for building, testing, and managing Firecracker microVMs.
+This directory provides the public Bazel rules and macros for building, configuring, and testing Firecracker microVMs.
 
 ## Overview
-The `firecracker` package serves as the primary entry point for consumers of `rules_firecracker`, exposing guest kernels, binaries, and root filesystem generation tools while hiding implementation details. It bridges Bazel's dependency management with runtime assets, ensuring reproducible and statically linked artifacts for isolated virtual machines. The module abstracts away VM lifecycle management, serial console monitoring, and complex integration testing scenarios like multi-node Kubernetes clusters.
+The `firecracker` package serves as the primary entry point for consumers of `rules_firecracker`, exposing guest kernels, binaries, and rootfs generation tools while hiding implementation details. It bridges high-level Starlark macros with low-level shell scripts to handle kernel compilation, disk image creation, and VM orchestration. This separation allows public rules to remain simple while encapsulating complex build logic internally.
 
 ## Deep Dive
-### Public API and Macros
-The `defs.bzl` file re-exports core rules from the private implementation, providing a consistent namespace for user workspaces. It exposes macros for creating initial RAM filesystems (`firecracker_initramfs`) and root filesystems (`firecracker_rootfs`). For virtual machine definitions, it offers `firecracker_microvm` for single instances and `firecracker_container` for container-based VMs. Testing capabilities include basic microVM tests, K3s-specific tests, cluster tests, and renumbering scenarios.
-
-### Binary and Kernel Assets
-The build system explicitly constructs and exposes static binaries required for testing and image creation. A Linux 6.1.155 kernel (`vmlinux`) is built from source using a pinned configuration and toolchain, cached for performance but not marked local. Platform-agnostic access to the Firecracker binary is provided via an alias that resolves to x86_64 or aarch64 specific repositories based on the host CPU. Additional pinned upstream binaries such as `busybox_static`, `k3s_binary`, and `jq` are made executable for use in test scripts and rootfs construction.
+### Build Macros and Visibility
+The module exposes key rule types categorized by function: image building (`firecracker_initramfs`, `firecracker_rootfs`), VM execution (`firecracker_microvm`, `firecracker_container`), and testing suites (`firecracker_test`, `firecracker_k3s_test`). These macros are re-exported from `private/macros.bzl` to hide implementation complexity. The `bzl_library` target exposes `defs.bzl`, which contains the high-level macros driving the build system. Platform-agnostic access to the Firecracker binary is provided via an alias that resolves based on the current CPU platform.
 
 ### Root Filesystem Generation
-Shell scripts exposed by the public API automate the creation of bootable disk images. These tools validate ELF binaries to ensure static linking, assemble directory trees, and format ext4 or cpio+gzip archives. Specialized variants handle specific use cases, including minimal Kubernetes environments and full Debian-based systems for edge nodes. All implementation scripts, templates, and private macros remain under `private/` and are excluded from the public API.
+Shell scripts automate the creation of bootable disk images tailored for specific use cases. Tools like `mkrootfs.sh` provide generic ext4 builders, while specialized variants handle Kubernetes clusters, OCI containers, and minimal initramfs. These tools ensure all binaries are statically linked and validate ELF headers to prevent runtime failures in the isolated guest environment. Initialization scripts such as `k3s_init` support guest-side setup for single-node and cluster tests.
+
+### Kernel Compilation and Testing
+A pinned Linux 6.1.155 kernel (`vmlinux`) is built from source using a specific configuration and toolchain, cached for performance but not marked local. Test infrastructure includes sophisticated runners for integration scenarios, managing multi-VM networking via bridges and TAP devices. Scripts generate self-contained Bash wrappers that monitor serial output, enforce timeouts, and parse JSON reports for validation, supporting both smoke tests and complex cluster formation scenarios.
 
 ## Key Interfaces
-- `//firecracker:defs.bzl`: Public Starlark macros for defining microVMs, containers, and tests.
-- `@rules_firecracker//:firecracker`: Alias for the platform-specific Firecracker binary.
-- `@rules_firecracker//:vmlinux`: Pinned Linux 6.1.155 kernel binary.
-- `mkrootfs.sh`: Script for generating generic ext4 root filesystem images.
-- `mkk3srootfs.sh`: Script for generating minimal Kubernetes (K3s) root filesystems.
-- `DEFAULT_KERNEL_CMDLINE`: Constant string providing default kernel command-line arguments.
+- `//firecracker:defs.bzl`: Public API entry point for loading Firecracker rules.
+- `firecracker_microvm`: Rule for creating runnable microVM instances.
+- `firecracker_test`: Rule for running tests against a single VM.
+- `firecracker_k3s_test`: Rule for testing k3s clusters within a VM.
+- `DEFAULT_KERNEL_CMDLINE`: Standard kernel command line configuration constant.
+- `firecracker`: Alias for the platform-specific Firecracker binary.
 
 ## Dependencies
-- `@rules_shell//shell:rules_bzl`: Provides shell-related rules used by macros.
-- Host toolchain: Required for kernel compilation and image formatting utilities.
-- Docker/Podman: Used by internal node image builders for base image construction.
-- Upstream binaries: Pinned versions of busybox, k3s, and jq.
+- Host toolchain: Required for compiling the Linux kernel.
+- Docker/Podman: Used for building base Debian filesystems.
+- `fakeroot`: Utilized during ext4 image formatting.
+- `@rules_shell//shell:rules_bzl`: Provides shell-related rules.
 
 ## Subcomponents
-- `BUILD.bazel`: Public target definitions and visibility settings.
-- `defs.bzl`: Public API entry point for Starlark macros.
-- `private/`: Internal implementation details, macros, and scripts.
+- `BUILD.bazel`: Public Bazel targets and visibility settings.
+- `defs.bzl`: Public API exports for macros and constants.
+- `private/`: Internal build macros, test scripts, and generators.

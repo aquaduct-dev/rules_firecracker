@@ -1,7 +1,5 @@
-<!-- docdaemon ts:2026-10-10T19:04:44Z hash:558fac5a41de87f7 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-15T22:44:11Z hash:e7de364e1920cf9a model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file defines Starlark rules for building Firecracker microVM images, containers, and integration tests within a Bazel build system.
+This file defines Bazel rules for building Linux boot images and running Firecracker microVMs in tests.
 
-It provides macros to package initramfs (`firecracker_initramfs`) and ext4 rootfs (`firecracker_rootfs`) images, and to launch runnable microVMs (`firecracker_microvm`). It supports booting OCI images directly as VMs via `firecracker_container`.
-
-Testing capabilities include single-VM assertions (`firecracker_test`), multi-node cluster networking (`firecracker_cluster_test`, `firecracker_renumber_test`), OS installation verification (`firecracker_install_cluster_test`), and k3s Kubernetes server validation (`firecracker_k3s_test`). All tests require KVM access and are tagged accordingly.
+It provides macros to create initramfs (`firecracker_initramfs`) and rootfs (`firecracker_rootfs`) targets, which serve as the disk images for `firecracker_microvm`. The `firecracker_test` macro boots a single VM and validates its console output against expected markers. For multi-node scenarios, `firecracker_cluster_test` manages a shared network bridge to boot multiple VMs simultaneously, while `firecracker_k3s_test` provisions a k3s cluster within a VM for integration testing. Additional rules like `firecracker_container` allow booting OCI images directly, and specialized tests handle installation workflows (`firecracker_install_cluster_test`) or IP renumbering resilience (`firecracker_renumber_test`). All tests requiring KVM are tagged appropriately to bypass sandboxing where necessary.

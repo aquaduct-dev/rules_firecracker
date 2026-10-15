@@ -1,44 +1,45 @@
-<!-- docdaemon ts:2026-10-10T19:07:21Z hash:e17d80b7ade6a164 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-15T22:45:22Z hash:26a5f03ec115a9eb model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory serves as the root workspace for `rules_firecracker`, defining the Bazel module, licensing, and CI/CD infrastructure.
+This repository root defines the `rules_firecracker` Bazel module for booting Linux microVMs in tests.
 
 ## Overview
-It orchestrates the build system configuration, dependency management, and continuous integration pipelines for Firecracker microVM rules. The directory ensures hermetic builds by pinning external binaries and kernels while exposing public APIs through standardized Bazel targets. It acts as the entry point for consumers to integrate microVM capabilities into their own workspaces.
+The root directory serves as the entry point for the `rules_firecracker` project, a Bazel extension that enables developers to define, build, and run isolated Firecracker microVMs within their test suites. It orchestrates the entire development lifecycle by exposing public APIs, managing pinned dependencies for hermetic builds, and configuring continuous integration pipelines. By centralizing license exports and module definitions, it ensures that consumers can easily integrate VM-based testing into their existing Bazel workspaces while maintaining compliance and reproducibility.
 
 ## Deep Dive
-### Module and Build Configuration
-The `MODULE.bazel` file declares the `rules_firecracker` module and its dependencies, including `bazel_skylib` and `rules_shell`. It pins critical external assets like the Firecracker VMM binary, Linux kernel source, Busybox, and k3s to ensure reproducible, hermetic builds. This approach eliminates host-specific variations by fetching pre-built or source-pinned artifacts directly from official releases.
+### Module Configuration
+The `MODULE.bazel` file declares the `rules_firecracker` module and its core dependencies, including `bazel_skylib` and `rules_shell`. To guarantee hermetic builds, it pins critical external binaries such as the Firecracker VMM (v1.17.0), jq, k3s, and a static Busybox initramfs base. These assets are fetched via `http_archive` with verified checksums, eliminating the need for host-installed tools during guest image construction or execution.
+
+### Build System Entry Point
+The root `BUILD.bazel` file acts as the workspace's primary build target, primarily responsible for exporting the `LICENSE` file. This standard Bazel practice ensures that any artifact built within the workspace correctly attributes legal terms, making the license accessible to downstream consumers without requiring internal path knowledge.
 
 ### CI/CD Orchestration
-The `.github` directory configures the continuous integration environment using GitHub Actions. A composite action sets up the Ubuntu runner with necessary build tools, KVM access, and Bazelisk caching to optimize build times. The main workflow automates verification across unit, kernel, VM, cluster, and end-to-end jobs, enforcing concurrency limits and ensuring code quality before merges.
+The `.github` directory automates the verification pipeline through GitHub Actions. The `setup` composite action prepares Ubuntu runners by installing build essentials, configuring KVM access via udev rules, and setting up Bazelisk caching to optimize kernel build times. The `ci.yml` workflow enforces concurrency limits and runs parallel jobs for unit analysis, kernel building, single-VM validation, multi-node cluster testing, and end-to-end rule consumption checks.
 
-### Documentation and Licensing
-The root `BUILD.bazel` exports the `LICENSE` file, making legal terms accessible to all consumers via Bazel's export mechanism. The `README.md` provides usage instructions for macros like `firecracker_initramfs` and `firecracker_test`. Automated documentation generation in the `docs/` subdirectory keeps API references synchronized with the codebase using Stardoc.
+### Documentation Automation
+The `docs` directory maintains API reference consistency using Stardoc. A dedicated Bazel target parses `//firecracker:defs.bzl` to generate Markdown documentation, which is then synchronized to `docs/defs.md`. A corresponding test ensures committed docs match generated output, preventing documentation drift in the main branch.
 
 ## Key Interfaces
-- `//firecracker:defs.bzl`: Public Starlark macros for defining microVMs, containers, and tests.
-- `@rules_firecracker//:firecracker`: Alias for the platform-specific Firecracker binary.
-- `@rules_firecracker//:vmlinux`: Pinned Linux 6.1.155 kernel binary.
-- Composite Action Input: `kvm` (boolean) - Controls KVM configuration in CI runners.
-- Workflow Triggers: push, pull_request, workflow_dispatch.
+- `MODULE.bazel`: Module declaration and dependency pinning
+- `BUILD.bazel`: Root build target and license export
+- `.github/actions/setup`: Composite action for runner environment setup
+- `.github/workflows/ci.yml`: CI workflow definition
+- `docs/BUILD.bazel`: Documentation generation targets
 
 ## Dependencies
-- GitHub Actions runner environment (Ubuntu 24.04)
+- Bazel Build System
+- GitHub Actions Runner Environment (Ubuntu 24.04)
 - bazel-contrib/setup-bazel
-- Build dependencies: build-essential, flex, bison, e2fsprogs, gdisk
-- KVM-enabled hosts for vm and cluster jobs
-- Sudo privileges for cluster job network setup
-- Bazel build system
+- Host toolchain for kernel compilation
+- KVM-enabled hosts for integration tests
 
 ## Subcomponents
-- .github/actions/setup/action.yml
-- .github/workflows/ci.yml
-- BUILD.bazel
-- LICENSE
-- MODULE.bazel
-- README.md
+- .github/
 - docs/
 - e2e/
 - examples/
 - firecracker/
 - tests/
+- BUILD.bazel
+- LICENSE
+- MODULE.bazel
+- README.md
