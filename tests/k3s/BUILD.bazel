@@ -79,7 +79,10 @@ sh_test(
     data = [":inner_failing_pc"],
     env = {
         "INNER_RLOC": "_main/tests/k3s/inner_failing_pc",
-        "WANT": "deliberate.failure",
+        # The harness's "failing PCs" line ("<id>\t<label>\t<error>"), which it
+        # prints only after parsing the report; the bare id would also match
+        # the raw report it dumps when the JSON does not parse.
+        "WANT": "deliberate.failure\tdeliberate",
     },
     tags = ["requires-kvm"],
     deps = ["@bazel_tools//tools/bash/runfiles"],
