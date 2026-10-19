@@ -8,6 +8,10 @@ inputs:
   kvm:
     description: Enable /dev/kvm for the runner user.
     default: "true"
+outputs:
+  kernel-cache-hit:
+    description: "'true' when the kernel disk cache was restored by its exact key."
+    value: ${{ steps.kernel-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -35,8 +39,14 @@ runs:
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
           | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
+        # --settle: trigger alone returns before udev has applied the rule.
+        sudo udevadm trigger --settle --name-match=kvm
         ls -l /dev/kvm
+        # Fail here rather than in the first VM test with a less obvious error.
+        if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+          echo "::error::/dev/kvm is not readable and writable by $(id -un) after the udev rule"
+          exit 1
+        fi
 
     - uses: bazel-contrib/setup-bazel@8cb04a772ab4c1eb984e9c1b493a182e96c5e425 # 0.19.0
       with:
@@ -51,6 +61,7 @@ runs:
     # `kernel` job builds it once per kernel-affecting change and saves the
     # disk cache under this key.
     - name: Restore kernel disk cache
+      id: kernel-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/fc-disk-cache

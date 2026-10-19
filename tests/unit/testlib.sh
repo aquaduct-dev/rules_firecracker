@@ -55,6 +55,8 @@ debugfs_cat() { debugfs -R "cat $2" "$1" 2>/dev/null; }
 # debugfs_mode IMAGE PATH — octal permission bits (e.g. 0755).
 debugfs_mode() { debugfs -R "stat $2" "$1" 2>/dev/null | sed -n 's/.*Mode: *\(0[0-7]*\).*/\1/p' | head -n1; }
 debugfs_exists() { debugfs -R "stat $2" "$1" 2>/dev/null | grep -q 'Inode:'; }
+# debugfs_owner IMAGE PATH — "uid:gid" of PATH in an ext4 image.
+debugfs_owner() { debugfs -R "stat $2" "$1" 2>/dev/null | sed -n 's/.*User: *\([0-9]*\) *Group: *\([0-9]*\).*/\1:\2/p' | head -n1; }
 
 # Same PT_INTERP check the image builders use (firecracker/private/mk*.sh).
 # --- ELF helpers (coreutils `od` only; no libmagic `file`) ---------------

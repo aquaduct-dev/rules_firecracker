@@ -32,6 +32,8 @@ done
 grep -E ' init$' "$T/list" | grep -q '^-rwxr-xr-x' && pass "/init is 0755" || fail "/init mode: $(grep -E ' init$' "$T/list")"
 grep -E ' etc/data.txt$' "$T/list" | grep -q '^-rw-r--r--' && pass "--file is 0644" || fail "--file mode wrong"
 grep -E ' opt/static$' "$T/list" | grep -q '^-rwxr-xr-x' && pass "--exec is 0755" || fail "--exec mode wrong"
+awk '$2 != "0/0" { bad = bad " " $NF } END { if (bad) { print "not 0/0:" bad; exit 1 } }' "$T/list" >"$T/owners" \
+  && pass "every entry owned 0/0" || fail "$(cat "$T/owners")"
 grep -E ' bin/sh -> busybox$' "$T/list" >/dev/null && pass "/bin/sh -> busybox" || fail "/bin/sh is not a busybox symlink"
 grep -qx 'bin/busybox' "$T/names" && ! grep -E ' bin/busybox -> ' "$T/list" >/dev/null \
   && pass "no busybox->busybox self-link" || fail "busybox self-link present"

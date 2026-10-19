@@ -39,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
+        id: setup
         with:
           kvm: "false"
       - name: Build //firecracker:vmlinux
@@ -46,12 +47,15 @@ jobs:
       - name: Build the kernel as seen from the e2e workspace
         working-directory: e2e/smoke
         run: bazel build --config=ci @rules_firecracker//firecracker:vmlinux
+      # Only on a miss: the exact key already exists after a hit, and a save
+      # that fails for any other reason should show, because every later
+      # job would then rebuild the kernel.
       - name: Save kernel disk cache
+        if: steps.setup.outputs.kernel-cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/fc-disk-cache
           key: fc-kernel-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'firecracker/BUILD.bazel', 'firecracker/private/build_kernel.sh', 'firecracker/private/vmlinux-6.1.config') }}
-        continue-on-error: true  # the key already exists after a cache hit
 
   # Every non-manual test: unit, single-VM boots, failure paths, container,
   # k3s single-node and the examples.

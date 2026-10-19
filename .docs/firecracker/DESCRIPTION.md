@@ -20,6 +20,11 @@ A pinned Linux 6.1.155 kernel (`vmlinux`) is built from source using a specific 
 - `firecracker_microvm`: Rule for creating runnable microVM instances.
 - `firecracker_test`: Rule for running tests against a single VM.
 - `firecracker_k3s_test`: Rule for testing k3s clusters within a VM.
+- `firecracker_initramfs` / `firecracker_rootfs`: Build a gzipped cpio initramfs or an ext4 rootfs image.
+- `firecracker_container`: Boot an OCI image (flattened to ext4) as a microVM.
+- `firecracker_cluster_test`: Boot several microVMs on a host bridge and wait for a marker.
+- `firecracker_renumber_test`: Boot a cluster, then reboot it onto a new subnet with its persistent disks.
+- `firecracker_install_cluster_test`: Run an installer onto each node's disk, then boot every node from its installed disk.
 - `DEFAULT_KERNEL_CMDLINE`: Standard kernel command line configuration constant.
 - `firecracker`: Alias for the platform-specific Firecracker binary.
 

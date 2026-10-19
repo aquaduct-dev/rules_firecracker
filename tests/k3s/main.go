@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -100,9 +101,19 @@ func main() {
 		if strings.TrimSpace(string(b)) != "extra file payload" {
 			return fmt.Errorf("content %q", b)
 		}
-		st, _ := os.Stat("/etc/fcextra/data.txt")
+		st, err := os.Stat("/etc/fcextra/data.txt")
+		if err != nil {
+			return err
+		}
 		if st.Mode().Perm() != 0o644 {
 			return fmt.Errorf("mode %v", st.Mode().Perm())
+		}
+		// The image is packed by an unprivileged build user; the file must
+		// still be root-owned in the guest, not owned by that user's uid.
+		if sys, ok := st.Sys().(*syscall.Stat_t); !ok {
+			return fmt.Errorf("stat: no ownership info (%T)", st.Sys())
+		} else if sys.Uid != 0 || sys.Gid != 0 {
+			return fmt.Errorf("owner %d:%d, want 0:0", sys.Uid, sys.Gid)
 		}
 		return nil
 	}())
@@ -129,7 +140,11 @@ func main() {
 		return nil
 	}))
 
-	buf, _ := json.MarshalIndent(rep, "", "  ")
+	buf, err := json.MarshalIndent(rep, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "marshal report:", err)
+		os.Exit(1)
+	}
 	if err := os.WriteFile(reportPath, buf, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "write report:", err)
 		os.Exit(1)

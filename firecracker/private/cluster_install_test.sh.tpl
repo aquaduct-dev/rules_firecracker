@@ -65,9 +65,19 @@ cluster_secret = ${SECRET}
 target_disk = ${LOOP}
 wipe_confirm = yes-i-am-sure
 EOF
-  sudo -n "$INSTALLER" --settings "$LOG/settings-${idx}.ini" --rootfs-image "$ROOTFS" >"$LOG/install-${idx}.log" 2>&1 \
-    || { echo "install-test: installer failed for node $idx" >&2; sudo -n losetup -d "$LOOP" 2>/dev/null; tail -5 "$LOG/install-${idx}.log" >&2; }
+  sudo -n "$INSTALLER" --settings "$LOG/settings-${idx}.ini" --rootfs-image "$ROOTFS" >"$LOG/install-${idx}.log" 2>&1
+  rc=$?
   sudo -n losetup -d "$LOOP" 2>/dev/null
+  if [[ $rc -ne 0 ]]; then
+    # Booting a disk the installer never finished can only time out on the
+    # marker, which hides the real cause. Fail here, with the whole log.
+    echo "install-test: installer exited $rc for node $idx; its output:" >&2
+    cat "$LOG/install-${idx}.log" >&2
+    echo "install-test: FAIL — node $idx was not installed, not booting" >&2
+    rm -rf "$LOG"
+    exit 1
+  fi
+  echo "install-test: node $idx installed onto $LOOP" >&2
 done
 
 echo "install-test: PHASE 2 — boot each node from its installed disk" >&2

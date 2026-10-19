@@ -73,6 +73,7 @@ s=$SECONDS
 boot "$INITRD_VM" FC_TIMEOUT=2 FAKE_FC_SLEEP=60
 assert_rc 0 "$rc" "FC_TIMEOUT kill exits 0"
 [[ $((SECONDS - s)) -lt 15 ]] && pass "FC_TIMEOUT enforced" || fail "FC_TIMEOUT not enforced"
+assert_contains "$T/out" "fc-runner: FC_TIMEOUT=2s reached, VM killed"
 # ... but a real firecracker failure propagates.
 boot "$INITRD_VM" FC_TIMEOUT=10 FAKE_FC_EXIT=3
 assert_rc 3 "$rc" "firecracker exit code propagates under FC_TIMEOUT"
