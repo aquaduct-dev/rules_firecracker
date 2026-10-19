@@ -9,7 +9,7 @@ This binary validates that a k3s microVM is fully operational by verifying kubec
 
 *   **`main`**: Orchestrates the smoke test. It checks for the existence of the kubeconfig file and waits for at least one node to report `Ready=True`. It exits with code 1 on failure, writing a detailed error report.
 *   **`waitNodeReady`**: Polls `/usr/local/bin/k3s kubectl get nodes` using a custom JSONPath query. It retries every 2 seconds until a node is ready or the timeout (default 60s) expires.
-*   **`hasReady`**: Parses the tab-separated output from `kubectl`, checking if any line ends with `True`.
+*   **`hasReady`**: Parses the output of that JSONPath query, which writes one `<name>\t<Ready status>` line per node (the tab comes from the template, not from kubectl's default table output). It returns true if the status after the first tab on any line is exactly `True`.
 *   **`writeReport`**: Serializes the `report` struct to JSON and writes it to the specified path (`/tmp/report.json` by default).
 
 ### Types

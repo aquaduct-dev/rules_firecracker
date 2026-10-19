@@ -7,7 +7,7 @@ The `setup` action prepares the Ubuntu 24.04 runner for `rules_firecracker` by i
 
 ## Deep Dive
 ### Package Installation
-Installs essential tools required for kernel building, such as `build-essential`, `flex`, and `bison`. It also includes utilities for disk image manipulation like `e2fsprogs` and `gdisk`. These packages are critical for compiling the guest kernel and managing block devices during tests.
+Installs the packages for building the guest kernel (`build-essential`, `flex`, `bison`, `bc`, `libelf-dev`, `libssl-dev`), for making images (`e2fsprogs`), for the install-to-disk rig (`gdisk`, `dosfstools`, `exfatprogs`), and `util-linux` and `iproute2` for block devices and the cluster tests' bridge and TAP networking.
 
 ### Sandbox Configuration
 Disables AppArmor restrictions on unprivileged user namespaces if the profile is present. This step is necessary to allow Bazel's `linux-sandbox` to function correctly within the containerized or restricted CI environment. Without this adjustment, sandboxed builds would fail due to permission denied errors.
@@ -27,7 +27,7 @@ Restores the guest kernel disk cache using a key derived from relevant source fi
 ## Dependencies
 - bazel-contrib/setup-bazel
 - Ubuntu 24.04 runner environment
-- Build dependencies: build-essential, flex, bison, e2fsprogs, gdisk
+- Host packages: build-essential, flex, bison, bc, libelf-dev, libssl-dev, e2fsprogs, gdisk, dosfstools, exfatprogs, util-linux, iproute2
 
 ## Subcomponents
 - action.yml

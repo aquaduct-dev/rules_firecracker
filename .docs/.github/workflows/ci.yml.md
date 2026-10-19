@@ -2,7 +2,7 @@
 ## TL;DR
 This file defines the CI pipeline for building, testing, and validating the Firecracker rules across unit, integration, and end-to-end scenarios.
 
-The workflow triggers on pushes to `main`, pull requests, and manual dispatches. It enforces concurrency limits to cancel redundant runs on the same branch or PR. The pipeline consists of four parallelizable jobs that depend on a shared kernel build artifact.
+The workflow triggers on pushes to `main`, pull requests, and manual dispatches. It enforces concurrency limits to cancel redundant runs on the same branch or PR. The pipeline has five jobs. `unit` and `kernel` start at once; `vm`, `cluster` and `e2e` wait for `kernel` and restore the guest kernel it saved in the disk cache.
 
 ### Jobs
 
