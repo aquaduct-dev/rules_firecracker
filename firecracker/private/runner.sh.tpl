@@ -127,7 +127,10 @@ JSON
     timeout --foreground -s KILL "${FC_TIMEOUT}" "$FIRECRACKER" --no-api --config-file vm.json
     rc=$?
     set -e
-    [[ $rc -eq 124 || $rc -eq 137 ]] && exit 0
+    if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+      echo "fc-runner: FC_TIMEOUT=${FC_TIMEOUT}s reached, VM killed (exit 0)" >&2
+      exit 0
+    fi
     exit $rc
   fi
   exec "$FIRECRACKER" --no-api --config-file vm.json
@@ -199,6 +202,7 @@ if [[ -n "${FC_TIMEOUT:-}" ]]; then
   set -e
   # 124 = timeout reached, 137 = killed (128+9). Both are intentional kills.
   if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+    echo "fc-runner: FC_TIMEOUT=${FC_TIMEOUT}s reached, VM killed (exit 0)" >&2
     exit 0
   fi
   exit $rc

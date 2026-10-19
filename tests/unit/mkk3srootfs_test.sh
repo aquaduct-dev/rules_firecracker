@@ -30,6 +30,10 @@ debugfs -R "stat /usr/local/bin/kubectl" "$I" 2>/dev/null | grep -q 'Fast link d
 [[ "$(debugfs_cat "$I" /etc/test_binary)" == mytest ]] && pass "/etc/test_binary" || fail "/etc/test_binary"
 [[ "$(debugfs_mode "$I" /usr/local/bin/mytest)" == 0755 ]] && pass "test binary 0755" || fail "test binary mode"
 [[ "$(debugfs_mode "$I" /etc/extra/f.txt)" == 0644 ]] && pass "--file 0644" || fail "--file mode"
+for p in / /etc/extra/f.txt /usr/local/bin/mytest /sbin/init; do
+  o="$(debugfs_owner "$I" "$p")"
+  [[ "$o" == 0:0 ]] && pass "$p owned 0:0" || fail "$p owned $o, want 0:0"
+done
 cmp -s <(debugfs_cat "$I" /sbin/init) "$INIT" && pass "/sbin/init is the init script" || fail "/sbin/init differs"
 
 "$MK" --out "$T/d.ext4" "${common[@]}" --test-binary "$T/dynamic.elf" --test-binary-name t 2>"$T/err"

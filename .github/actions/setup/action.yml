@@ -8,6 +8,10 @@ inputs:
   kvm:
     description: Enable /dev/kvm for the runner user.
     default: "true"
+outputs:
+  kernel-cache-hit:
+    description: "'true' when the kernel disk cache was restored by its exact key."
+    value: ${{ steps.kernel-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -51,6 +55,7 @@ runs:
     # `kernel` job builds it once per kernel-affecting change and saves the
     # disk cache under this key.
     - name: Restore kernel disk cache
+      id: kernel-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/fc-disk-cache

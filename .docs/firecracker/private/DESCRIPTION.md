@@ -19,7 +19,7 @@ The directory includes sophisticated test runners for integration scenarios. `cl
 `build_kernel.sh` automates the compilation of a pinned Linux kernel source tarball into an uncompressed vmlinux ELF image. It ensures reproducibility by disabling unnecessary features like module loading and applying a specific configuration, producing a binary optimized for Firecracker’s microVM requirements.
 
 ## Key Interfaces
-- `//firecracker/private:defs.bzl`: Publicly visible exports for helper scripts and templates.
+- `exports_files` (every `*.sh`, `*.tpl` and `*.config` here): public only because the macros instantiate genrules in the caller's package that read them; not an API.
 - `//firecracker/private:macros`: Internal Starlark library for VM and test rule definitions.
 - `build_kernel.sh`: Script to compile a deterministic vmlinux kernel image.
 - `cluster_run.sh`: Orchestrator for multi-VM network setup and concurrent testing.

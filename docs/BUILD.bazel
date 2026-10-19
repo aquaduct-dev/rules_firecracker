@@ -1,6 +1,7 @@
-# Generated API reference. `bazel run //docs:update` regenerates docs/*.md;
-# the generated `//docs:update_test`-style diff tests fail CI when a
-# docstring in //firecracker:defs.bzl changes without regenerating.
+# Generated API reference. `bazel run //docs:update` regenerates docs/defs.md.
+# write_source_files also generates `//docs:update_test`, a diff test (run by
+# CI's `bazel test //docs/...`) that fails when a docstring in
+# //firecracker:defs.bzl changes without regenerating.
 
 load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("@stardoc//stardoc:stardoc.bzl", "stardoc")

@@ -111,10 +111,12 @@ tmpfs     /run        tmpfs     defaults  0 0
 EOF
 
 # Pack with busybox's own cpio + gzip so no host cpio/gzip is needed. Paths
-# are sorted for a stable archive order.
+# are sorted for a stable archive order. `-R 0:0` records every entry as
+# root-owned; otherwise the archive carries the build user's uid into the
+# guest.
 BB="$ROOT/bin/busybox"
 # Fixed mtimes (the archive still records per-build inode numbers, so it is
 # not bit-for-bit reproducible).
 find "$ROOT" -exec touch -h -d @0 {} +
-( cd "$ROOT" && find . | LC_ALL=C sort | "$BB" cpio -o -H newc 2>/dev/null \
+( cd "$ROOT" && find . | LC_ALL=C sort | "$BB" cpio -o -H newc -R 0:0 2>/dev/null \
   | "$BB" gzip -9 ) > "$OUT"
