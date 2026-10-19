@@ -1,30 +1,31 @@
-<!-- docdaemon ts:2026-10-10T19:05:46Z hash:c160c86f158c597d model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:25:02Z hash:3f873ad9c1092191 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory implements a smoke test that boots a single-node k3s cluster inside a Firecracker microVM and verifies its operational readiness.
+This directory implements a static Go binary and associated Bazel targets to verify k3s cluster readiness inside a Firecracker microVM.
 
 ## Overview
-The `k3s_smoke` directory provides the infrastructure to validate that a k3s server initializes correctly within a lightweight, isolated environment. It combines a Bazel build configuration with a Go binary designed to run inside the guest VM. The primary goal is to ensure that the kubeconfig is accessible and that at least one node reports a `Ready` status, serving as a critical health check in the CI pipeline.
+The `k3s_smoke` suite validates that a single-node Kubernetes cluster boots correctly within a minimal root filesystem. It distinguishes between unit tests for parsing logic and integration tests that boot a full VM, ensuring both code correctness and end-to-end functionality. The design prioritizes static linking to support execution in environments lacking standard C libraries.
 
 ## Deep Dive
-### Build Configuration
-The `BUILD.bazel` file defines three targets: a private Go library (`k3s_smoke_lib`), a static Go binary (`k3s_smoke`), and a custom test target (`k3s_smoke_test`). Static linking is enforced because the minimal busybox rootfs lacks libc. The test target utilizes `firecracker_k3s_test` from `//firecracker:defs.bzl` and includes a 300-second timeout. It is tagged `requires-kvm`, allowing hosts without KVM support to skip execution via `--test_tag_filters=-requires-kvm`.
+### Guest Binary Logic
+The `main.go` binary runs inside the guest after `k3s` initializes. It performs two critical checks: verifying the existence of `/etc/rancher/k3s/k3s.yaml` and polling `kubectl get nodes` until a node reports `Ready=True`. The implementation uses `strings.Cut` for efficient parsing of tab-separated node status output, handling edge cases like empty lines or malformed data without external dependencies. Diagnostic reports are written as JSON before exit, capturing cumulative failure counts to distinguish transient network issues from configuration errors.
 
-### Guest-Side Validation
-The `main.go` binary executes inside the microVM after k3s initialization. It orchestrates two main checks: verifying the existence of the kubeconfig file and polling for node readiness. The `waitNodeReady` function retries every 2 seconds using `kubectl get nodes` until a node reports `Ready=True` or a 60-second timeout expires. Results are serialized into a JSON report written to `/tmp/report.json`, enabling automated harnesses to determine success or failure based on pass conditions.
+### Build Configuration
+The `BUILD.bazel` file defines three primary targets. `k3s_smoke_lib` compiles the shared source, while `k3s_smoke` produces a statically linked binary. Static linking is mandatory because the embedded rootfs contains only busybox and k3s, lacking a C library. This avoids explicit `cgo=0` flags by leveraging `rules_go` defaults. The `k3s_smoke_test` target orchestrates an end-to-end scenario using a custom `firecracker_k3s_test` rule, which boots a microVM and executes the binary. It is tagged `requires-kvm` to skip on hosts without hardware virtualization.
+
+### Unit Testing
+`main_test.go` isolates the `hasReady` function, validating its ability to parse `kubectl` output formats. These tests run without booting a VM, providing rapid feedback on parsing logic changes. Recent updates replaced hand-written splitting logic with `strings.Split` and `strings.Cut` to ensure consistent behavior across various input formats, including trailing newlines and blank lines.
 
 ## Key Interfaces
-- `k3s_smoke`: Public static Go binary embedded with the library.
-- `k3s_smoke_lib`: Private Go library wrapping `main.go` for internal referencing.
-- `k3s_smoke_test`: Primary test target running the scenario with a 300-second timeout.
-- `reportPC`: Struct representing a single Pass Condition with ID, label, status, and error message.
-- `report`: Top-level structure containing the scenario name and list of pass conditions.
+- `waitNodeReady`: Polls kubectl until timeout, distinguishing API failures from unready states.
+- `hasReady`: Parses tab-separated node output to detect any node with status `True`.
+- `writeReport`: Serializes diagnostic data to JSON for host-side analysis.
 
 ## Dependencies
-- `//firecracker:defs.bzl`: Custom test rule definitions.
-- `rules_go`: Go build rules for static linking.
-- `k3s`: The Kubernetes distribution being tested.
-- `kubectl`: Command-line tool used for node verification.
+- `rules_go`: For Go compilation and static linking.
+- `firecracker`: Pinned v1.17.0 binaries for microVM orchestration.
+- `k3s`: Embedded in the guest rootfs.
 
 ## Subcomponents
-- `BUILD.bazel`: Bazel build configuration.
-- `main.go`: Guest-side validation logic.
+- `main.go`: Guest-side smoke test binary.
+- `main_test.go`: Unit tests for node status parsing.
+- `BUILD.bazel`: Bazel build definitions for library, binary, and tests.

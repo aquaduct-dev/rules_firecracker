@@ -1,27 +1,27 @@
-<!-- docdaemon ts:2026-10-15T22:44:55Z hash:1e7c4685cecf65c7 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:25:23Z hash:109bf528eb01b844 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory automates the generation and maintenance of Stardoc documentation for the Firecracker Bazel rules.
+This directory contains the generated API reference documentation for the Firecracker Bazel rules and the build orchestration logic to keep it synchronized with source code.
 
 ## Overview
-The `docs` directory serves as the central hub for keeping API reference documentation in sync with the source code. It leverages Bazel build rules to parse Starlark definitions from `//firecracker:defs.bzl` and output structured Markdown. This automation ensures that the public interface documented in `defs.md` always reflects the current state of the codebase, preventing drift between implementation and documentation.
+The `docs` directory serves as the single source of truth for public API documentation regarding Linux boot image generation and microVM testing within the Bazel workspace. It ensures that developers have accurate, up-to-date references for macros like `firecracker_test`, `firecracker_cluster_test`, and `firecracker_k3s_test`. By automating the regeneration process, the directory prevents documentation drift between the Bazel macro definitions in `//firecracker:defs.bzl` and the human-readable reference.
 
 ## Deep Dive
 ### Documentation Generation
-The core logic resides in `BUILD.bazel`, which defines two primary targets. The `defs_docs` target invokes `stardoc` to analyze `//firecracker:defs.bzl`. This rule parses the Starlark macros—such as `firecracker_initramfs`, `firecracker_rootfs`, and various test macros—and extracts their signatures, attributes, and descriptions. The output is a generated Markdown file (`defs_generated.md`) that accurately represents the current API surface without manual intervention.
+The core mechanism relies on Stardoc to parse the Starlark definitions in `//firecracker:defs.bzl`. The `defs_docs` target extracts docstrings and attribute descriptions from macros such as `firecracker_initramfs` and `firecracker_rootfs`, outputting a structured Markdown file (`defs_generated.md`). This automated approach captures changes to argument types, default values, and behavioral descriptions immediately upon code modification.
 
 ### Synchronization and Validation
-To maintain consistency, the `update` target uses `write_source_files` from `aspect_bazel_lib`. It takes the output from `defs_docs` and writes it directly to `docs/defs.md`. This step effectively commits the latest documentation changes into the repository. A corresponding test, `//docs:update_test`, verifies that the generated content matches the committed version. If they diverge, the test fails, signaling that developers must run `bazel run //docs:update` to refresh the docs before committing. This CI-friendly approach prevents stale documentation from entering the main branch.
+To maintain consistency, the `update` target copies the generated content into `docs/defs.md`. A dedicated CI test (`//docs:update_test`) compares the committed file against the freshly generated output. If discrepancies exist, the test fails, enforcing that any change to the Bazel rules must be accompanied by a regenerated documentation commit. This pipeline eliminates manual synchronization errors and ensures the README reflects the current state of the `firecracker_microvm` and related integration tests.
 
 ## Key Interfaces
-- `defs_docs`: Target generating raw Stardoc Markdown from `//firecracker:defs.bzl`.
-- `update`: Target synchronizing generated docs to `docs/defs.md`.
-- `update_test`: Test ensuring committed docs match generated output.
+- `defs_docs`: Stardoc rule generating `defs_generated.md` from `//firecracker:defs.bzl`.
+- `update`: Rule copying generated docs to `docs/defs.md`.
+- `update_test`: CI check validating documentation sync status.
 
 ## Dependencies
-- `@aspect_bazel_lib//lib:write_source_files`
-- `@io_bazel_stardoc//:stardoc`
-- `//firecracker:defs.bzl` (source of truth)
+- `stardoc`: For parsing Starlark docstrings.
+- `rules_python` (write_source_files): For file copying operations.
+- `//firecracker:defs.bzl`: Source of truth for API definitions.
 
 ## Subcomponents
-- `BUILD.bazel`: Build rules for doc generation and sync.
+- `BUILD.bazel`: Build targets for generation and sync.
 - `defs.md`: Committed API reference documentation.

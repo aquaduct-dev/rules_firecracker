@@ -1,39 +1,42 @@
-<!-- docdaemon ts:2026-10-10T19:05:46Z hash:8932a61a41785765 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:25:04Z hash:c428ddf61a5520ea model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory defines the CI pipeline for building, testing, and validating Firecracker rules across unit, integration, and end-to-end scenarios.
+This directory defines the GitHub Actions CI pipeline for building, testing, and validating Firecracker-based virtual machines.
 
 ## Overview
-The `ci.yml` workflow automates the verification of Bazel rules for Firecracker, ensuring code quality and functional correctness before merging. It triggers on pushes to `main`, pull requests, and manual dispatches, enforcing concurrency limits to cancel redundant runs on the same branch or PR. The pipeline is structured into parallelizable jobs that depend on a shared kernel build artifact to optimize execution time.
+The `ci.yml` workflow orchestrates a comprehensive test suite covering unit validation, kernel compilation, single-VM execution, and multi-VM cluster scenarios. It ensures that guest images are built once and cached efficiently before downstream jobs consume them. The pipeline is designed to fail fast on unit tests while providing robust verification of KVM-dependent features through parallelized and sequential job stages.
 
 ## Deep Dive
-The workflow orchestrates five distinct jobs to cover the full spectrum of validation:
+### Concurrency and Triggers
+The workflow triggers on pushes to `main`, pull requests, and manual dispatches. Concurrency groups cancel redundant runs on the same branch or PR to save resources. Pushes to main and PRs are handled distinctly to avoid duplicate executions for the same commit.
 
-### Static Analysis and Unit Tests
-The **unit** job provides fast feedback by running static analysis, unit tests, and documentation generation. It operates without KVM access, making it lightweight and suitable for early-stage checks.
+### Unit Testing (`unit`)
+This job provides fast feedback by running Bazel analysis, unit tests, and documentation generation. It operates without KVM access, ensuring that basic code integrity and build rules are validated early in the pipeline.
 
-### Kernel Build
-The **kernel** job builds the guest Linux kernel (`vmlinux`) from both the root module and the e2e workspace perspectives. It caches the resulting disk image in `~/.cache/fc-disk-cache` using a content-based key to accelerate downstream jobs that require the kernel binary.
+### Kernel Building (`kernel`)
+The `kernel` job builds the guest kernel (`vmlinux`) from both the root module and the e2e workspace. Results are cached in a disk cache to accelerate subsequent jobs. This job acts as a prerequisite for `vm`, `cluster`, and `e2e` jobs, ensuring the guest image is available before integration tests run.
 
-### VM Integration Tests
-The **vm** job executes non-manual tests, including single-VM boots, failure paths, container support, k3s single-node setups, and examples. It requires KVM and depends on the successful completion of the `kernel` job. Test logs are uploaded as artifacts upon failure for debugging.
+### VM and Cluster Testing (`vm`, `cluster`)
+The `vm` job executes non-manual tests, including unit tests, single-VM boots, failure paths, container, k3s, and examples. It requires KVM and verifies that `firecracker` is not present on the host PATH, relying instead on pinned binaries resolved through runfiles. Test logs are uploaded only on failure.
 
-### Cluster Rig Tests
-The **cluster** job runs multi-VM rig tests, such as 2-VM ping, 3-node k3s clusters, and persistent disk operations, on a host bridge. These tests require elevated privileges (`sudo`) and KVM. Due to high memory usage, they run sequentially with `--local_test_jobs=1`. Logs are uploaded on failure.
+The `cluster` job runs multi-VM tests (ping, k3s, persistent disks) using a host bridge with sudo and KVM. Due to high memory requirements, these tests run sequentially rather than in parallel.
 
-### End-to-End Validation
-The **e2e** job validates the rules when consumed as an external module via `local_path_override`. This mirrors how users and the BCR test module interact with the codebase, ensuring compatibility in real-world consumption scenarios.
+### E2E Validation (`e2e`)
+The `e2e` job validates external consumption of the rules by running smoke tests in the `e2e/smoke` directory. This ensures that the public API and rules behave correctly when used outside the internal development environment.
+
+### Artifact Management
+Artifacts are uploaded only when tests fail, reducing storage overhead and keeping successful runs clean. Recent changes ensure guest images have root-owned files to address cleanup issues in docdaemon.
 
 ## Key Interfaces
-- Workflow trigger events (push, pull_request, workflow_dispatch)
-- Job dependencies (kernel -> vm/cluster)
-- Artifact caching strategy (content-based key for disk images)
-- Concurrency group configuration (branch/PR level)
+- Workflow triggers: `push`, `pull_request`, `workflow_dispatch`
+- Jobs: `unit`, `kernel`, `vm`, `cluster`, `e2e`
+- Artifacts: Uploaded on failure for debugging
 
 ## Dependencies
 - GitHub Actions runner environment
-- KVM-enabled hosts for vm and cluster jobs
-- Sudo privileges for cluster job network setup
-- Bazel build system for rule compilation and testing
+- Bazel build system
+- KVM hardware support
+- Pinned Firecracker v1.17.0 binaries
+- Disk caching mechanisms
 
 ## Subcomponents
 - ci.yml

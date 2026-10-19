@@ -1,21 +1,21 @@
-<!-- docdaemon ts:2026-10-10T19:04:52Z hash:7e4288037a611a4d model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:30Z hash:459dfd7e49fb859b model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This binary validates that a k3s microVM is fully operational by verifying kubeconfig accessibility and node readiness.
+This file is the guest-side smoke test binary for k3s, verifying that the microVM boots with a functional Kubernetes cluster.
 
 ### Purpose
-`k3s_smoke` runs inside the guest microVM after `k3s` initialization to assert cluster health. It produces a JSON report indicating pass/fail status for specific pass conditions, enabling automated test harnesses to determine VM boot success.
+The `k3s_smoke` binary runs inside the microVM after `k3s` starts via `/sbin/init`. It validates two critical conditions:
+1. The kubeconfig at `/etc/rancher/k3s/k3s.yaml` exists and is readable.
+2. At least one node reports `status.conditions[Ready]=True`.
+
+On success, it writes a JSON report with `boot.k3s-ready` passed. On failure, it records the error reason. The binary is statically linked to run on the busybox-only rootfs.
 
 ### Key Components
 
-*   **`main`**: Orchestrates the smoke test. It checks for the existence of the kubeconfig file and waits for at least one node to report `Ready=True`. It exits with code 1 on failure, writing a detailed error report.
-*   **`waitNodeReady`**: Polls `/usr/local/bin/k3s kubectl get nodes` using a custom JSONPath query. It retries every 2 seconds until a node is ready or the timeout (default 60s) expires.
-*   **`hasReady`**: Parses the output of that JSONPath query, which writes one `<name>\t<Ready status>` line per node (the tab comes from the template, not from kubectl's default table output). It returns true if the status after the first tab on any line is exactly `True`.
-*   **`writeReport`**: Serializes the `report` struct to JSON and writes it to the specified path (`/tmp/report.json` by default).
+*   **`main`**: Parses flags for paths and namespaces. Checks kubeconfig existence, then calls `waitNodeReady`. Appends pass/fail conditions to the report structure.
+*   **`waitNodeReady`**: Polls `k3s kubectl get nodes` until timeout (default 60s). Distinguishes between API server failures (`kubectl` errors) and unready nodes. Tracks attempt counts for detailed error reporting.
+*   **`hasReady`**: Parses tab-separated output from the JSONPath query to detect any node with status `True`. Uses `strings.Cut` for efficient parsing.
+*   **`finish` & `writeReport`**: Ensures the host receives diagnostic data by writing the JSON report before exiting. If writing fails, it exits non-zero to signal total failure.
 
-### Types
-
-*   **`reportPC`**: Represents a single Pass Condition with an ID, label, boolean status, and optional error message.
-*   **`report`**: The top-level structure containing the scenario name and a list of pass conditions.
-
-### Integration
-The binary is statically linked (cgo-free) to run on a minimal busybox rootfs. It is invoked by the host-side `firecracker_k3s_test` target as part of the CI pipeline.
+### Design Notes
+*   **Static Linking**: No CGO dependencies allow execution in minimal environments.
+*   **Diagnostic Reporting**: The report includes cumulative failure counts (command errors vs. not-ready states) to help distinguish transient network issues from persistent configuration problems.

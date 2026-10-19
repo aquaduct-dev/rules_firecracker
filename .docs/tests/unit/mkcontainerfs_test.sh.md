@@ -1,10 +1,17 @@
-<!-- docdaemon ts:2026-10-10T19:05:15Z hash:59130300088b8d9b model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:36Z hash:af1b161d34954a03 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file is a Bash unit test that verifies `mkcontainerfs` correctly flattens an OCI image layout into an ext4 filesystem, handling whiteouts, environment variables, and entrypoint generation.
+This script validates that `mkcontainerfs` correctly flattens a multi-layer OCI image layout into an ext4 filesystem, handling whiteouts, opaque directories, and init generation.
 
-It constructs a two-layer OCI layout manually using `tar`, `sha256sum`, and JSON manifests to simulate complex scenarios like file deletion (whiteouts) and directory opacity. The test then invokes the `mkcontainerfs` tool against this layout and validates the resulting ext4 image using `debugfs`.
+The test constructs a three-layer OCI layout in `$T/layout` with specific file operations:
+- **Layer 1**: Adds files (`/app/run.sh`, `/app/old.txt`) and an opaque directory (`/etc/opaque`).
+- **Layer 2**: Whiteouts `/app/old.txt` (file deletion) and marks `/etc/opaque` as opaque (hiding previous contents), then adds new files (`b.txt`, `c.txt`).
+- **Layer 3**: Whiteouts `/etc/opaque/c.txt` to verify selective deletion within opaque directories.
 
-Key verification points include:
-- **Layer Merging**: Ensures lower-layer files are removed when upper layers contain corresponding `.wh.` markers or opaque directory markers (`..wh..opq`).
-- **Init Script Generation**: Checks that `/sbin/init` is created with correct permissions (0755) and contains the expected shell commands, including merged environment variables where command-line overrides take precedence over image-defined ones.
-- **Error Handling**: Confirms that missing entrypoints/commands result in rejection, and malformed extra arguments are caught.
+It invokes `mkcontainerfs` with this layout, a busybox binary, and extra environment arguments, then verifies the resulting `ext4` image using `debugfs`:
+- Confirms whiteouts are applied (files removed).
+- Confirms opaque directory semantics (previous files hidden, new ones visible).
+- Ensures no `.wh.` markers leak into the final filesystem.
+- Checks `/sbin/init` content for correct environment variable ordering (extra env overrides image env), working directory changes, and command execution.
+- Verifies file ownership is root (0:0) and permissions are correct.
+
+Finally, it tests error cases: rejecting images with no Entrypoint/Cmd and invalid `--extra-env` syntax.

@@ -1,16 +1,7 @@
-<!-- docdaemon ts:2026-10-10T19:05:14Z hash:59ee9564b612072e model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:35Z hash:4f7e3dbb94f368da model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This script validates the `mkinitramfs` tool and its associated Bazel macro by verifying archive structure, permission modes, dynamic linking rejection, and error handling.
+This file validates the `mkinitramfs` tool and its associated Bazel macro by verifying archive structure, permissions, ownership, and error handling.
 
-### Purpose
-The file serves as a comprehensive unit test for the Firecracker initramfs generation pipeline. It ensures that the `mkinitramfs` binary correctly packages files, executables, and BusyBox into a compressed CPIO archive while enforcing security constraints like static linking requirements.
+The test suite ensures that generated initramfs images are suitable for the Firecracker microVM environment. It verifies the happy path by checking for required directory structures (`/dev`, `/proc`, etc.), correct file modes (0755 for executables, 0644 for data), and root ownership (0:0) across all entries. It explicitly confirms that busybox applets are symlinked correctly and that no self-referential symlinks exist.
 
-### Key Test Scenarios
-- **Happy Path**: Verifies correct directory layout (`/init`, `/bin/busybox`, etc.), file permissions (0755 for execs, 0644 for data), and symlink creation (`/bin/sh -> busybox`).
-- **Dynamic Linking Rejection**: Confirms that dynamically linked ELF binaries are rejected in both `--exec` arguments and the `--busybox` source, ensuring the resulting initramfs is self-contained.
-- **Usage Errors**: Checks that relative paths, unknown flags, and missing required arguments return exit code 2.
-- **Macro Integration**: Unpacks the output of the `firecracker_initramfs` Bazel macro to verify that high-level build rules produce valid, expected content.
-
-### Dependencies
-- Uses `rlocation` to locate runfiles for `mkinitramfs`, `busybox`, and the macro output.
-- Relies on `testlib.sh` for assertion helpers (`pass`, `fail`, `assert_rc`).
+Security constraints are enforced by rejecting dynamically linked binaries in `--exec` arguments, as the initramfs lacks a libc. The tool also rejects non-static busybox binaries and invalid usage patterns such as relative paths or unknown flags. Finally, it validates the output of the `firecracker_initramfs` macro to ensure high-level integration works correctly.

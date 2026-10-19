@@ -1,15 +1,7 @@
-<!-- docdaemon ts:2026-10-10T19:05:22Z hash:5fc3ea3264bfc38e model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:32Z hash:d678479a93cbadb7 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This script builds an ext4 disk image from a staging directory of files using `mkfs.ext4`.
+This script builds an ext4 disk image from a staging directory, ensuring all files are root-owned for guest VM compatibility.
 
-### Purpose
-`mkrootfs.sh` automates the creation of ext4 filesystem images for use in Firecracker microVMs. It handles file installation, permission setting, and final formatting into a sparse image file.
+It accepts arguments to specify the output path, size, label, and file sets (regular vs executable). It creates a temporary staging tree, populates it with the specified files using `install`, and formats the image using `mkfs.ext4 -d`.
 
-### Key Functions
-- **Argument Parsing**: Accepts `--out`, `--size-mb`, `--label`, `--file`, and `--exec` flags to define output path, size, label, and file contents.
-- **Staging Setup**: Creates a temporary directory (`staging`) to hold files before formatting.
-- **File Installation**: Copies specified source files into the staging tree with correct permissions (0644 for regular files, 0755 for executables). Validates that destination paths are absolute.
-- **Image Creation**: Uses `truncate` to create a sparse file of the requested size, then `mkfs.ext4 -d` to format it and seed it with the staging contents.
-
-### Integration
-This script is typically invoked by build rules (e.g., Bazel) to generate root filesystem images required for VM instances. It ensures consistent, reproducible image generation without requiring root privileges during the build process.
+Because `mkfs.ext4` preserves the ownership of the build user, the script uses `debugfs` to recursively re-own every inode in the resulting image to UID/GID 0. This ensures the guest environment sees standard root permissions without requiring host root access or fakeroot. The script validates that required tools (`mkfs.ext4`, `debugfs`) are available and cleans up temporary files on exit.

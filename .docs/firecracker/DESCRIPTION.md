@@ -1,40 +1,46 @@
-<!-- docdaemon ts:2026-10-15T22:44:56Z hash:a9105e50fd2c65e0 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:25:25Z hash:7dfe5c387ead6546 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory provides the public Bazel rules and macros for building, configuring, and testing Firecracker microVMs.
+This directory provides Bazel rules and macros for building, configuring, and testing Firecracker microVMs.
 
 ## Overview
-The `firecracker` package serves as the primary entry point for consumers of `rules_firecracker`, exposing guest kernels, binaries, and rootfs generation tools while hiding implementation details. It bridges high-level Starlark macros with low-level shell scripts to handle kernel compilation, disk image creation, and VM orchestration. This separation allows public rules to remain simple while encapsulating complex build logic internally.
+The `firecracker` module exposes a public API for constructing bootable disk images and launching lightweight virtual machines within the Bazel build system. It abstracts away the complexity of kernel compilation, root filesystem generation, and VM orchestration, allowing consumers to define declarative VM configurations. The implementation is split between public entry points in the root directory and internal macros and scripts in the `private/` subdirectory.
 
 ## Deep Dive
-### Build Macros and Visibility
-The module exposes key rule types categorized by function: image building (`firecracker_initramfs`, `firecracker_rootfs`), VM execution (`firecracker_microvm`, `firecracker_container`), and testing suites (`firecracker_test`, `firecracker_k3s_test`). These macros are re-exported from `private/macros.bzl` to hide implementation complexity. The `bzl_library` target exposes `defs.bzl`, which contains the high-level macros driving the build system. Platform-agnostic access to the Firecracker binary is provided via an alias that resolves based on the current CPU platform.
+### Image Building
+Disk images are constructed using shell scripts that assemble ext4 or cpio archives from staging trees. A critical step involves re-owning all inodes to `root:root` (0:0) after formatting to prevent permission errors in the unprivileged guest kernel. This ensures that files copied via tools like `mkfs.ext4 -d` do not retain host user ownership. Initramfs archives are validated to ensure all binaries are statically linked, avoiding dynamic loader dependencies.
 
-### Root Filesystem Generation
-Shell scripts automate the creation of bootable disk images tailored for specific use cases. Tools like `mkrootfs.sh` provide generic ext4 builders, while specialized variants handle Kubernetes clusters, OCI containers, and minimal initramfs. These tools ensure all binaries are statically linked and validate ELF headers to prevent runtime failures in the isolated guest environment. Initialization scripts such as `k3s_init` support guest-side setup for single-node and cluster tests.
+### Kernel Compilation
+A pinned Linux kernel source tarball is compiled into an uncompressed ELF binary. The build process applies a specific configuration that disables unnecessary features such as module loading. Deterministic build timestamps are enforced to guarantee reproducible outputs suitable for consistent microVM booting.
 
-### Kernel Compilation and Testing
-A pinned Linux 6.1.155 kernel (`vmlinux`) is built from source using a specific configuration and toolchain, cached for performance but not marked local. Test infrastructure includes sophisticated runners for integration scenarios, managing multi-VM networking via bridges and TAP devices. Scripts generate self-contained Bash wrappers that monitor serial output, enforce timeouts, and parse JSON reports for validation, supporting both smoke tests and complex cluster formation scenarios.
+### Test Orchestration
+Test infrastructure includes generators that produce self-contained shell scripts for Bazel `sh_test` targets. These scripts manage VM lifecycle, stream serial logs, and implement early-exit logic based on console markers. For multi-node scenarios, orchestrators handle network bridges and TAP devices, while init processes bootstrap Kubernetes clusters and validate readiness.
 
 ## Key Interfaces
-- `//firecracker:defs.bzl`: Public API entry point for loading Firecracker rules.
-- `firecracker_microvm`: Rule for creating runnable microVM instances.
-- `firecracker_test`: Rule for running tests against a single VM.
-- `firecracker_k3s_test`: Rule for testing k3s clusters within a VM.
-- `firecracker_initramfs` / `firecracker_rootfs`: Build a gzipped cpio initramfs or an ext4 rootfs image.
-- `firecracker_container`: Boot an OCI image (flattened to ext4) as a microVM.
-- `firecracker_cluster_test`: Boot several microVMs on a host bridge and wait for a marker.
-- `firecracker_renumber_test`: Boot a cluster, then reboot it onto a new subnet with its persistent disks.
-- `firecracker_install_cluster_test`: Run an installer onto each node's disk, then boot every node from its installed disk.
-- `DEFAULT_KERNEL_CMDLINE`: Standard kernel command line configuration constant.
-- `firecracker`: Alias for the platform-specific Firecracker binary.
+- `firecracker_initramfs`: Rule to construct bootable initramfs images.
+- `firecracker_rootfs`: Rule to generate ext4 root filesystem images.
+- `firecracker_microvm`: Macro to create and run a single microVM instance.
+- `firecracker_container`: Rule for handling OCI image-based VMs.
+- `firecracker_test`: Runs tests against a single VM.
+- `firecracker_k3s_test`: Tests against a k3s cluster within a VM.
+- `DEFAULT_KERNEL_CMDLINE`: Standard kernel command line configuration.
 
 ## Dependencies
-- Host toolchain: Required for compiling the Linux kernel.
-- Docker/Podman: Used for building base Debian filesystems.
-- `fakeroot`: Utilized during ext4 image formatting.
-- `@rules_shell//shell:rules_bzl`: Provides shell-related rules.
+- `@rules_shell//shell:rules_bzl`: Shell-related rules used by macros.
+- Pinned Firecracker release binaries (via `MODULE.bazel`).
+- Standard Linux utilities: `mkfs.ext4`, `debugfs`, `busybox`, `jq`.
 
 ## Subcomponents
-- `BUILD.bazel`: Public Bazel targets and visibility settings.
-- `defs.bzl`: Public API exports for macros and constants.
-- `private/`: Internal build macros, test scripts, and generators.
+- `BUILD.bazel`: Public target definitions and aliases.
+- `defs.bzl`: Public API entry point and macro exports.
+- `private/macros.bzl`: Internal Starlark macro definitions.
+- `private/BUILD.bazel`: Build configuration and visibility.
+- `private/build_kernel.sh`: Kernel compilation script.
+- `private/mkrootfs.sh`: Generic ext4 rootfs builder.
+- `private/mkk3srootfs.sh`: k3s rootfs builder.
+- `private/mkcontainerfs.sh`: OCI to ext4 conversion.
+- `private/mkinitramfs.sh`: Initramfs archive assembly.
+- `private/gen_test.sh`: Smoke-test script generator.
+- `private/gen_k3s_test.sh`: K3s integration test generator.
+- `private/cluster_run.sh`: Multi-VM network orchestrator.
+- `private/k3s_init.sh`: Single-node k3s init process.
+- `private/k3s_cluster_init.sh`: Multi-node k3s cluster init.

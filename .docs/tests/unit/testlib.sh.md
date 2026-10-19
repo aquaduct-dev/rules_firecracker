@@ -1,24 +1,25 @@
-<!-- docdaemon ts:2026-10-10T19:05:24Z hash:905f1876c80b9404 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:29Z hash:2d534ef69dd606c9 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file provides shared shell utilities for unit testing, including assertion helpers, ELF binary inspection tools, and ext4 image interaction functions.
+This file provides shared shell utilities for unit testing, including assertion helpers, ELF binary inspection, and ext4 image analysis.
 
 ### Purpose
-It serves as a test harness library sourced after `runfiles.bash`. It manages the test environment (PATH, temp directory), tracks pass/fail counts, and provides specific helpers for validating ELF binaries and ext4 filesystem images without mounting them.
+Sourced after `runfiles.bash`, it establishes a test environment by ensuring `sbin` tools (like `debugfs`) are on the `PATH`. It manages a temporary directory (`T`) and tracks failure counts to report results via `finish`.
 
 ### Key Functions
 
-**Test Framework**
-*   `fail` / `pass`: Increment the failure counter or log success.
-*   `finish`: Exits with status 1 if any checks failed, otherwise exits successfully.
-*   `assert_contains` / `assert_not_contains`: Verify substring presence in files using `grep`.
-*   `assert_rc`: Assert that a command's return code matches an expected value (exact integer or "nonzero").
+**Assertions**
+*   `assert_contains` / `assert_not_contains`: Verify substring presence in files using `grep -qF`. On failure, they dump the file content to stderr.
+*   `assert_rc`: Validates return codes, supporting exact integer matches or a special `nonzero` check.
 
-**ELF Binary Helpers**
-*   `mkelf`: Generates a minimal little-endian ELF64 executable header with specified program header types. Useful for creating test fixtures.
-*   `is_elf`: Checks if a file starts with the ELF magic bytes (`\x7fELF`).
-*   `elf_is_dynamic`: Determines if an ELF binary is dynamically linked by inspecting program headers for `PT_INTERP` (type 3). Uses `od` for parsing.
+**ELF Inspection**
+*   `mkelf`: Generates minimal little-endian ELF64 binaries with specified program header types (e.g., `PT_INTERP` for dynamic linking).
+*   `is_elf`: Checks for the standard ELF magic bytes using `od`.
+*   `elf_is_dynamic`: Parses ELF headers to detect `PT_INTERP` (type 3), determining if a binary requires a dynamic loader. Handles both 32-bit and 64-bit classes.
 
-**Ext4 Image Helpers**
-*   `debugfs_cat`: Extracts file content from an ext4 image using `debugfs -R cat`.
-*   `debugfs_mode`: Extracts octal permission bits from an ext4 image using `debugfs -R stat`.
-*   `debugfs_exists`: Checks for the existence of a path within an ext4 image via `debugfs -R stat`.
+**Ext4 Image Analysis**
+*   `debugfs_cat`: Extracts file contents from an ext4 image without mounting.
+*   `debugfs_mode`: Retrieves octal permission bits.
+*   `debugfs_owner`: Extracts UID:GID ownership.
+*   `debugfs_exists`: Checks inode existence.
+
+These tools support tests that validate guest image construction, specifically ensuring correct permissions and binary linkage properties as required by recent build system changes.

@@ -1,32 +1,35 @@
-<!-- docdaemon ts:2026-10-10T19:05:58Z hash:e6ee617f960c8488 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:25:04Z hash:a3dac5bb34415db7 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory contains the test harness, fixtures, and guest binaries required to validate K3s functionality within an isolated Firecracker VM environment.
+This directory contains the integration test suite for validating that a Firecracker-based k3s guest correctly processes extra manifests, files, and container images.
 
 ## Overview
-The `tests/k3s` suite verifies that K3s correctly handles extra resource injection, including manifests, files, executables, and container images, inside a microVM. It ensures that the host-side Bazel build targets accurately propagate these resources to the guest and that the guest can detect and report their presence. Additionally, it includes failure scenario validation to confirm that the test framework properly detects and reports pass condition failures.
+The `k3s_extras_test` target spins up a VM to verify that the launcher properly injects static assets and applies custom Kubernetes resources. It ensures that binaries are executable, files have correct ownership and permissions, and OCI images are auto-imported into containerd without external registry access. A separate failing-path test confirms that the harness correctly detects and reports deliberate failures in pass conditions.
 
 ## Deep Dive
-### Resource Injection Verification
-The primary goal is to validate the `extra_*` attributes of the `firecracker_k3s_test` target. The guest binary (`k3s_extras`) checks for applied ConfigMaps, specific file permissions, executable flags, and imported container images. This ensures that the isolation layer does not strip or modify injected resources.
+### Extra Asset Validation
+The test binary verifies three categories of injected extras. First, it checks that `/etc/fcextra/data.txt` exists with content matching `data.txt`, has `0644` permissions, and is owned by `root:root`. This ownership check was added to ensure build tools re-own inodes to `0:0` after formatting, preventing leftover build-user UIDs. Second, it runs `/opt/extra/busybox` to confirm executables are runnable with `0755` permissions. Third, it polls containerd to ensure images from `/var/lib/rancher/k3s/agent/images` are imported successfully.
 
-### Failure Scenario Testing
-A separate subdirectory (`failing/`) contains a binary designed to simulate controlled failures. It generates a JSON report with explicit failure conditions and exits with code 1. This allows the test suite to verify that the host environment correctly interprets guest-side failures and logs them appropriately.
+### Manifest Application
+The suite validates that extra YAML manifests are applied by the `k3s_init` process. It uses `fixture.yaml` to create a ConfigMap with a specific marker (`from-extra-manifest`) and `k3s_extras.yaml` as a signal file at `/etc/manifests/k3s_extras.yaml`. The guest agent checks for this signal file's presence to trigger additional validation steps, ensuring the manifest injection mechanism works end-to-end.
 
-### Fixture Management
-Static fixtures like `data.txt` and YAML manifests provide deterministic data for tests. These are used to verify content integrity, hash validation, and manifest application without requiring dynamic generation at runtime.
+### Failure Reporting
+The `failing/` subdirectory provides a negative test case. The guest binary intentionally fails one pass condition (`deliberate.failure`) while passing another (`ok.pc`). It exits with code 1 and writes a JSON report. The host test `k3s_failing_pc_fails_test` wraps this execution, asserting that the harness parses the failure line correctly rather than silently passing on malformed reports or raw dump output.
 
 ## Key Interfaces
-- None (internal implementation details only)
+- `main()`: Entry point for the guest test binary that parses flags and runs validation checks.
+- `firecracker_k3s_test`: Bazel rule used to launch the VM and execute the guest binary.
+- `k3s_failing_pc_fails_test`: Shell test that verifies failure detection logic.
 
 ## Dependencies
-- Standard Go libraries for JSON marshaling and file I/O
-- Firecracker microVM runtime environment
-- K3s/Kubectl command-line tools within the guest
+- `firecracker_k3s_test` infrastructure
+- Standard Go flag and JSON libraries
+- K3s cluster components (containerd, kubelet)
+- Bazel build rules for test execution
 
 ## Subcomponents
-- main.go: Guest-side test binary logic
-- failing/: Directory containing the failure simulation binary
-- BUILD.bazel: Bazel build definitions for test targets
-- data.txt: Static test payload fixture
-- fixture.yaml: ConfigMap fixture for manifest testing
-- k3s_extras.yaml: Signal manifest for extra test scenarios
+- `BUILD.bazel`: Defines test targets and dependencies.
+- `main.go`: Guest-side test binary implementation.
+- `data.txt`: Static payload fixture for file integrity checks.
+- `fixture.yaml`: ConfigMap manifest for marker validation.
+- `k3s_extras.yaml`: Signal manifest for scenario triggering.
+- `failing/`: Directory containing the intentional failure test binary.

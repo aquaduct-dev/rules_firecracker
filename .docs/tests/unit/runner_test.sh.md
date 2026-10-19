@@ -1,7 +1,11 @@
-<!-- docdaemon ts:2026-10-10T19:05:23Z hash:518577a01176c186 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-19T23:24:37Z hash:adca671e28ee576c model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file is a unit test suite for the Firecracker microVM launcher, verifying configuration generation and runtime behavior without requiring KVM.
+This file validates the `firecracker_microvm` launcher's configuration generation, runtime overrides, and error handling in a non-KVM environment.
 
-It exercises the `runner.sh.tpl` script by injecting a fake Firecracker binary that dumps the generated `vm.json`. The tests cover two primary boot modes: **initrd** (kernel + initramfs) and **rootfs** (direct disk boot). Key scenarios include validating machine configuration (vCPU count, memory), attaching extra drives, configuring networking via `FC_TAP` and `FC_GUEST_MAC`, and handling persistent disks.
+It uses a fake Firecracker binary to capture the generated `vm.json` and verify correctness against expected values for CPU, memory, boot sources, and network interfaces. The test suite covers:
 
-The suite also validates environment variable overrides such as `FC_FIRECRACKER` for custom binaries, `FC_TIMEOUT` for process lifecycle management, and `FC_KEEP_WORK` for debugging. It ensures that path resolution works correctly with both absolute and relative `RUNFILES_DIR` paths, confirming that no host PATH lookups occur for internal resources.
+*   **Boot Modes:** Both initrd and rootfs configurations, including extra drives and persistent disks.
+*   **Runtime Knobs:** Environment variables like `FC_TAP`, `FC_GUEST_MAC`, `FC_CMDLINE_EXTRA`, `FC_PERSIST_DISK`, `FC_BOOT_DISK`, and `FC_ROOT_PART`.
+*   **Overrides:** Custom `FC_FIRECRACKER` binaries and timeout enforcement via `FC_TIMEOUT`.
+*   **Path Resolution:** Ensures no host PATH lookup occurs for the Firecracker binary, relying instead on runfiles resolution, even with relative paths.
+*   **Error Handling:** Verifies that missing files or non-zero exit codes from the underlying process are correctly propagated or handled.
