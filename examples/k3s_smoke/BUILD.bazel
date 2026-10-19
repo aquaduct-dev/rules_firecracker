@@ -7,7 +7,7 @@
 # Tagged `requires-kvm` so KVM-less hosts skip via
 #   --test_tag_filters=-requires-kvm
 
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 load("//firecracker:defs.bzl", "firecracker_k3s_test")
 
 go_library(
@@ -24,6 +24,13 @@ go_binary(
     name = "k3s_smoke",
     embed = [":k3s_smoke_lib"],
     visibility = ["//visibility:public"],
+)
+
+# hasReady's parsing, without a VM.
+go_test(
+    name = "k3s_smoke_unit_test",
+    srcs = ["main_test.go"],
+    embed = [":k3s_smoke_lib"],
 )
 
 firecracker_k3s_test(

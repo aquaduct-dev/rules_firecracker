@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -123,36 +124,15 @@ func waitNodeReady(kubeconfig string, timeout time.Duration) error {
 	return errors.New(msg)
 }
 
+// hasReady reports whether any "<name>\t<status>" line from the JSONPath
+// query in waitNodeReady has the status True.
 func hasReady(out string) bool {
-	for _, line := range splitLines(out) {
-		// Format: "<name>\tTrue" or "<name>\tFalse"
-		for i := 0; i < len(line); i++ {
-			if line[i] == '\t' {
-				if line[i+1:] == "True" {
-					return true
-				}
-				break
-			}
+	for _, line := range strings.Split(out, "\n") {
+		if _, status, ok := strings.Cut(line, "\t"); ok && status == "True" {
+			return true
 		}
 	}
 	return false
-}
-
-func splitLines(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			if i > start {
-				out = append(out, s[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		out = append(out, s[start:])
-	}
-	return out
 }
 
 func writeReport(path string, r report) error {
