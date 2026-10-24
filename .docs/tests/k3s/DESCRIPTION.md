@@ -10,7 +10,7 @@ The `k3s_extras_test` target spins up a VM to verify that the launcher properly 
 The test binary verifies three categories of injected extras. First, it checks that `/etc/fcextra/data.txt` exists with content matching `data.txt`, has `0644` permissions, and is owned by `root:root`. This ownership check was added to ensure build tools re-own inodes to `0:0` after formatting, preventing leftover build-user UIDs. Second, it runs `/opt/extra/busybox` to confirm executables are runnable with `0755` permissions. Third, it polls containerd to ensure images from `/var/lib/rancher/k3s/agent/images` are imported successfully.
 
 ### Manifest Application
-The suite validates that extra YAML manifests are applied by the `k3s_init` process. It uses `fixture.yaml` to create a ConfigMap with a specific marker (`from-extra-manifest`) and `k3s_extras.yaml` as a signal file at `/etc/manifests/k3s_extras.yaml`. The guest agent checks for this signal file's presence to trigger additional validation steps, ensuring the manifest injection mechanism works end-to-end.
+The suite validates that extra YAML manifests are applied by the `k3s_init` process. It uses `fixture.yaml` to create a ConfigMap with a specific marker (`from-extra-manifest`) and `k3s_extras.yaml` as the scenario file at `/etc/manifests/k3s_extras.yaml`. The guest test checks that the launcher passed this path as `--scenario` and that the file exists; it does not gate any other checks.
 
 ### Failure Reporting
 The `failing/` subdirectory provides a negative test case. The guest binary intentionally fails one pass condition (`deliberate.failure`) while passing another (`ok.pc`). It exits with code 1 and writes a JSON report. The host test `k3s_failing_pc_fails_test` wraps this execution, asserting that the harness parses the failure line correctly rather than silently passing on malformed reports or raw dump output.
@@ -31,5 +31,5 @@ The `failing/` subdirectory provides a negative test case. The guest binary inte
 - `main.go`: Guest-side test binary implementation.
 - `data.txt`: Static payload fixture for file integrity checks.
 - `fixture.yaml`: ConfigMap manifest for marker validation.
-- `k3s_extras.yaml`: Signal manifest for scenario triggering.
+- `k3s_extras.yaml`: No-op scenario manifest whose path the launcher passes as `--scenario`.
 - `failing/`: Directory containing the intentional failure test binary.
