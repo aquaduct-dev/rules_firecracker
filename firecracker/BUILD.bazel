@@ -5,7 +5,10 @@
 # `vmlinux`          — the firecracker guest kernel (Linux 6.1.155), built
 #                      from the kernel.org tarball pinned in MODULE.bazel
 #                      against private/vmlinux-6.1.config (upstream
-#                      firecracker CI config + CONFIG_FUSE_FS=y). Uses the
+#                      firecracker CI config + CONFIG_FUSE_FS=y + the
+#                      netfilter matches/targets kube-proxy's iptables and
+#                      nftables rules need, so ClusterIP Services work in
+#                      k3s guests). Uses the
 #                      HOST toolchain (gcc make bc flex bison libelf-dev
 #                      libssl-dev). Sandboxed but not `local`, so it is
 #                      cached by --disk_cache/--remote_cache.

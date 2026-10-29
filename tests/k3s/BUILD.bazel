@@ -1,6 +1,7 @@
 # firecracker_k3s_test with every extra_* attribute: the guest binary checks
 # that manifests were applied, files/execs installed with the right modes and
-# the image tarball imported into k3s' containerd.
+# the image tarball imported into k3s' containerd, and that kube-proxy can
+# route a ClusterIP (the kernel has the netfilter options it needs).
 
 load("@rules_go//go:def.bzl", "go_binary")
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_load")

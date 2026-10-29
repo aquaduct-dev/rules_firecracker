@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -138,6 +139,23 @@ func main() {
 			return fmt.Errorf("fctest/extra:latest not imported; images:\n%s", out)
 		}
 		return nil
+	}))
+
+	// kube-proxy: a ClusterIP must route. The kubernetes Service is the one
+	// Service that exists without any image, and kube-proxy DNATs it to the
+	// API server for node-originated traffic too. Without the netfilter
+	// matches kube-proxy's iptables rules use (comment, mark, statistic, ...)
+	// it cannot program any Service and this dial hangs.
+	check(&rep, "kube_proxy.cluster_ip_routes", poll(120*time.Second, func() error {
+		ip, err := kubectl(kubeconfig, "get", "service", "kubernetes", "-n", "default", "-o", "jsonpath={.spec.clusterIP}")
+		if err != nil {
+			return fmt.Errorf("get service: %v: %s", err, ip)
+		}
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(strings.TrimSpace(ip), "443"), 3*time.Second)
+		if err != nil {
+			return fmt.Errorf("dial kubernetes ClusterIP: %w", err)
+		}
+		return conn.Close()
 	}))
 
 	buf, err := json.MarshalIndent(rep, "", "  ")
