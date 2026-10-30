@@ -1,41 +1,39 @@
-<!-- docdaemon ts:2026-10-19T23:25:26Z hash:2bfa53477efadbdd model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-30T02:13:18Z hash:817cfbda4dba227a model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory contains the comprehensive test infrastructure for validating Firecracker microVMs, including unit tests for build logic and integration tests for networking, clustering, and container execution.
+This directory contains the complete test infrastructure for validating Firecracker microVMs, ranging from isolated unit tests to complex multi-VM Kubernetes cluster scenarios.
 
 ## Overview
-The `tests` directory ensures the correctness of the entire microVM lifecycle, from image construction to runtime behavior. It separates concerns into isolated subdirectories: `unit` for mocking-based validation of scripts and launchers, and specialized integration suites (`cluster`, `container`, `k3s`, `vm`) for end-to-end scenarios requiring actual KVM execution. This structure allows for fast feedback on build tools while rigorously verifying complex interactions like IP renumbering and Kubernetes formation.
+The `tests` suite ensures correctness across the entire build and runtime stack by verifying image construction, launcher behavior, and guest-side logic. It employs a hybrid approach: shell-based unit tests mock the VMM to validate configuration generation without hardware, while integration tests spin up real microVMs using KVM to verify boot sequences, networking, and storage integrity. The suite also covers advanced features like OCI image layering, IP renumbering persistence, and full k3s cluster formation with netfilter validation.
 
 ## Deep Dive
 ### Unit Testing and Mocking
-The `unit/` suite validates helper scripts and configuration generation without hardware dependencies. It uses `fake_firecracker.sh` to simulate VM invocations, capturing arguments and state dumps to verify launcher logic. Tests ensure that image builders (`mkrootfs`, `mkinitramfs`) produce correct ext4 structures with root-owned inodes (0:0), preventing host UID leakage during builds.
+The `unit/` subdirectory isolates helper scripts and image builders (`mkrootfs`, `mkinitramfs`) from the hypervisor. By mocking the Firecracker binary via `fake_firecracker.sh`, these tests verify CPU/memory settings, network interface configurations, and ext4 inode ownership (enforced as root-owned to prevent UID leakage). They also validate the test generation utilities that produce guest-side init scripts, ensuring marker detection and timeout handling are robust against malformed JSON or missing states.
 
-### Integration Scenarios
-Integration tests run real microVMs to verify critical behaviors. The `cluster/` directory orchestrates multi-VM setups for network connectivity, k3s formation, and disk installation, using unique subnets for concurrent execution. `container/` tests OCI image layering, specifically AUFS whiteout handling and environment propagation. `k3s/` validates extra asset injection and manifest application, including negative tests for failure reporting. `vm/` covers basic boot sequences, storage persistence, and timeout detection via serial console assertions.
+### Integration and VM Validation
+The `vm/` and `container/` directories execute real microVMs to verify boot sequences and filesystem semantics. `vm/` checks initrd/rootfs initialization, block device persistence on extra drives, and failure modes like timeouts. `container/` focuses on OCI image mechanics, specifically AUFS whiteout file handling across layers, ensuring that deleted files in lower layers are correctly masked in the overlay. These tests assert serial console output against expected markers to confirm successful environment propagation and runtime state.
 
-### Configuration and Fixtures
-Tests rely on deterministic configurations passed via kernel command lines or injected settings files. Static fixtures like `hostname.txt` and payload files ensure reproducible environments. Recent changes enforced strict ownership checks on guest inodes to address build-user UID leakage issues discovered during CI runs.
+### Cluster and Network Scenarios
+Complex interactions are validated in `cluster/` and `k3s/`. The `cluster/` suite orchestrates multi-VM setups on host bridges to test end-to-end connectivity, IP renumbering identity persistence, and OS installation from rootfs images. The `k3s/` directory validates Kubernetes functionality within guests, including kube-proxy netfilter support for ClusterIP routing, containerd auto-import of local images, and ConfigMap injection. Negative testing in `k3s/failing/` ensures the harness correctly reports intentional failures rather than masking them as silent passes.
 
 ## Key Interfaces
-*   `BUILD.bazel`: Defines all test targets, including `sh_test`, `firecracker_microvm`, and custom rules.
-*   `testlib.sh`: Shared shell utilities for assertions, ELF parsing, and ext4 inspection.
-*   `fake_firecracker.sh`: Mock VMM script for simulating VM launches in unit tests.
-*   `nettest_init.sh`: Guest entry point for network connectivity validation.
-*   `renumber_init.sh`: Guest entry point for IP renumbering and identity persistence.
-*   `install_node_init.sh`: Guest entry point for post-installation verification.
-*   `installer.sh`: Script for provisioning disk images and injecting cluster settings.
-*   `run.sh`: Entrypoint for container environment and filesystem verification.
-*   `main.go`: Guest-side test binary for k3s extra asset validation.
-*   `expect_failure.sh`: Wrapper for verifying negative test outcomes and timeouts.
+*   `BUILD.bazel`: Defines all Bazel test targets, including `sh_test`, `firecracker_microvm`, and custom macros.
+*   `testlib.sh`: Shared shell utilities for assertions, ELF parsing, and ext4 inspection in unit tests.
+*   `fake_firecracker.sh`: Mock VMM script that captures invocation arguments and simulates resource resolution.
+*   `nettest_init.sh`: Guest entry point for basic two-VM network connectivity validation.
+*   `renumber_init.sh`: Guest entry point for verifying identity persistence during IP address changes.
+*   `installer.sh`: Script for provisioning GPT disk layouts and injecting cluster secrets into rootfs images.
+*   `main.go`: Guest-side Go binary for k3s feature validation, flag checking, and network verification.
+*   `oci_image`: Bazel target defining the multi-layer OCI container structure for container tests.
 
 ## Dependencies
 *   Bazel Build System
 *   Firecracker MicroVM Runtime (pinned version)
-*   KVM Hypervisor (`/dev/kvm`)
-*   BusyBox Utilities
-*   k3s Binaries
-*   Linux Kernel (with CONFIG_IP_PNP and reboot support)
-*   rules_oci (for container image construction)
-*   jq (for JSON processing in tests)
+*   KVM Hypervisor Support (`/dev/kvm`)
+*   BusyBox Utilities (minimal userspace)
+*   k3s and containerd Binaries (for cluster tests)
+*   Linux Kernel (with CONFIG_IP_PNP, netfilter modules, and reboot support)
+*   rules_oci (for constructing test container images)
+*   jq (JSON processing for test generation validation)
 
 ## Subcomponents
 *   `BUILD.bazel`

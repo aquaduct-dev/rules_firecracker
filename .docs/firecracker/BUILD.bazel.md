@@ -1,11 +1,21 @@
-<!-- docdaemon ts:2026-10-10T19:04:52Z hash:17c3fac4d022f474 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-30T02:12:50Z hash:5a1fef2eaf04e9fe model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file defines the public Bazel targets for rules_firecracker, exposing guest kernels, binaries, and rootfs generation tools while hiding implementation details.
+This file defines the public Bazel targets for the Firecracker rules, exposing guest kernels, binaries, and rootfs generation tools.
 
-It serves as the primary entry point for consumers of this module. The `bzl_library` target exposes `defs.bzl`, which contains the high-level macros driving the build system. Platform-agnostic access to the Firecracker binary is provided via the `firecracker` alias, which resolves to either x86_64 or aarch64 specific repositories based on the current CPU platform.
+### Public API
+The `exports_files` directive exposes `defs.bzl`, which contains the high-level macros (`firecracker_k3s_test`, etc.). The implementation details are private.
 
-The file explicitly builds and exposes several static binaries required for testing and image creation:
-*   **vmlinux**: A Linux 6.1.155 kernel built from source using a pinned configuration and toolchain. It is cached for performance but not marked local.
-*   **busybox_static**, **k3s_binary**, and **jq**: Pinned upstream binaries made executable and accessible for use in test scripts and rootfs construction.
+**Core Binaries & Artifacts**
+*   **`vmlinux`**: Builds the guest kernel (Linux 6.1.155) from source using a pinned config. It enables netfilter modules required by kube-proxy for ClusterIP Services in k3s guests. Built with the HOST toolchain and cached.
+*   **`firecracker`**: An alias resolving to the pinned upstream release binary for the current CPU architecture (x86_64 or aarch64). Runners resolve this via runfiles, not the host PATH.
+*   **`busybox_static`**, **`k3s_binary`**, **`jq`**: Pinned static binaries for testing and rootfs construction. Executable bits are set during build since upstream sources lack them.
 
-Additionally, it exposes shell scripts for generating various root filesystem images (e.g., `mkrootfs`, `mkk3srootfs`) and initialization scripts (`k3s_init`). All implementation scripts, templates, and private macros are located under `private/` and are excluded from the public API.
+**Rootfs Generators**
+A list comprehension generates `sh_binary` targets for image builders:
+*   `mkinitramfs`, `mkrootfs`, `mkcontainerfs`: Standard rootfs creation.
+*   `mkk3srootfs`: Generates a rootfs for k3s tests.
+*   `mksystemdrootfs`, `mknoderootfs`, `mknodeimage`: Debian-based systemd images for production nodes.
+*   `gen_test`, `gen_k3s_test`: Test script generators.
+
+**Initialization Scripts**
+*   **`k3s_init`**, **`k3s_cluster_init`**: Aliases to private shell scripts used as PID-1 init processes for firecracker VMs.

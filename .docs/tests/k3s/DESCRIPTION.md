@@ -1,35 +1,35 @@
-<!-- docdaemon ts:2026-10-19T23:25:04Z hash:a3dac5bb34415db7 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-30T02:12:56Z hash:8395edcc0bd72bcd model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This directory contains the integration test suite for validating that a Firecracker-based k3s guest correctly processes extra manifests, files, and container images.
+This directory contains the integration test suite for running K3s on Firecracker, validating cluster functionality, network routing, and failure handling.
 
 ## Overview
-The `k3s_extras_test` target spins up a VM to verify that the launcher properly injects static assets and applies custom Kubernetes resources. It ensures that binaries are executable, files have correct ownership and permissions, and OCI images are auto-imported into containerd without external registry access. A separate failing-path test confirms that the harness correctly detects and reports deliberate failures in pass conditions.
+The `tests/k3s` directory defines Bazel targets to build and execute integration tests against a K3s guest VM. It verifies that the guest kernel supports necessary netfilter options for kube-proxy, validates the injection of extra files, executables, and container images, and ensures the test harness correctly reports both success and intentional failures.
 
 ## Deep Dive
-### Extra Asset Validation
-The test binary verifies three categories of injected extras. First, it checks that `/etc/fcextra/data.txt` exists with content matching `data.txt`, has `0644` permissions, and is owned by `root:root`. This ownership check was added to ensure build tools re-own inodes to `0:0` after formatting, preventing leftover build-user UIDs. Second, it runs `/opt/extra/busybox` to confirm executables are runnable with `0755` permissions. Third, it polls containerd to ensure images from `/var/lib/rancher/k3s/agent/images` are imported successfully.
+### Feature Validation
+The primary test target injects static binaries, files, and OCI images into the VM before booting K3s. It verifies that `containerd` auto-imports local images without registry access and that injected ConfigMaps are accessible. A critical check ensures ClusterIP services are routable, relying on specific netfilter kernel modules (comment, mark, statistic) enabled to support kube-proxy’s iptables rules.
 
-### Manifest Application
-The suite validates that extra YAML manifests are applied by the `k3s_init` process. It uses `fixture.yaml` to create a ConfigMap with a specific marker (`from-extra-manifest`) and `k3s_extras.yaml` as the scenario file at `/etc/manifests/k3s_extras.yaml`. The guest test checks that the launcher passed this path as `--scenario` and that the file exists; it does not gate any other checks.
+### Negative Testing
+A dedicated subdirectory provides a guest binary designed to fail specific pass conditions. This allows the host suite to verify that the launcher correctly propagates failure states and parses JSON reports accurately, ensuring CI pipelines catch errors rather than masking them as silent passes.
 
-### Failure Reporting
-The `failing/` subdirectory provides a negative test case. The guest binary intentionally fails one pass condition (`deliberate.failure`) while passing another (`ok.pc`). It exits with code 1 and writes a JSON report. The host test `k3s_failing_pc_fails_test` wraps this execution, asserting that the harness parses the failure line correctly rather than silently passing on malformed reports or raw dump output.
+### Test Fixtures
+Static YAML manifests define expected cluster state, such as a ConfigMap marker used to validate manifest application. A raw data file serves as a deterministic payload for integrity checks, ensuring that file ownership and permissions are correctly set within the guest rootfs.
 
 ## Key Interfaces
-- `main()`: Entry point for the guest test binary that parses flags and runs validation checks.
-- `firecracker_k3s_test`: Bazel rule used to launch the VM and execute the guest binary.
-- `k3s_failing_pc_fails_test`: Shell test that verifies failure detection logic.
+- `k3s_extras_test`: Bazel target for the main feature validation suite.
+- `k3s_failing_pc_fails_test`: Bazel target for negative testing failure reporting.
+- `main.go`: Guest-side binary orchestrating flag, manifest, and network checks.
+- `failing/main.go`: Guest binary intentionally failing to test error propagation.
 
 ## Dependencies
-- `firecracker_k3s_test` infrastructure
-- Standard Go flag and JSON libraries
-- K3s cluster components (containerd, kubelet)
-- Bazel build rules for test execution
+- `//firecracker:defs.bzl`: Firecracker-specific Bazel rules.
+- Standard Go libraries for JSON parsing and HTTP networking.
+- K3s and containerd binaries within the guest environment.
 
 ## Subcomponents
-- `BUILD.bazel`: Defines test targets and dependencies.
-- `main.go`: Guest-side test binary implementation.
-- `data.txt`: Static payload fixture for file integrity checks.
-- `fixture.yaml`: ConfigMap manifest for marker validation.
-- `k3s_extras.yaml`: No-op scenario manifest whose path the launcher passes as `--scenario`.
-- `failing/`: Directory containing the intentional failure test binary.
+- `BUILD.bazel`: Bazel target definitions.
+- `data.txt`: Static test payload.
+- `fixture.yaml`: Expected ConfigMap manifest.
+- `k3s_extras.yaml`: Scenario file for flag verification.
+- `main.go`: Main guest test logic.
+- `failing/`: Directory containing the failure-intentional binary.

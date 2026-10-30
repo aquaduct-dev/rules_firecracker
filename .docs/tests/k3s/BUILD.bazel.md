@@ -1,7 +1,9 @@
-<!-- docdaemon ts:2026-10-19T23:24:34Z hash:b73894964f5afcf3 model:openrouter/qwen/qwen3.7-flash -->
+<!-- docdaemon ts:2026-10-30T02:12:48Z hash:d8c011259638c734 model:openrouter/qwen/qwen3.7-flash -->
 ## TL;DR
-This file defines the Bazel build targets for the `k3s_extras` integration test, which validates that a Firecracker-based k3s guest correctly handles extra manifests, files, and container images.
+This file defines Bazel targets to build and run integration tests for k3s on Firecracker, including extra feature validation and failure path verification.
 
-The target `k3s_extras_test` uses `firecracker_k3s_test` to spin up a VM with specific extras: it installs a static busybox binary, places `data.txt` at `/etc/fcextra/data.txt`, imports a pre-built OCI image (`fctest-extra.tar`) into containerd, and applies two YAML manifests. The test binary `k3s_extras` verifies these artifacts are present and correct.
+It loads `firecracker_k3s_test` from `//firecracker:defs.bzl` alongside standard Go, OCI, and shell test rules. The primary target, `k3s_extras_test`, validates that the guest kernel supports netfilter options required by kube-proxy for ClusterIP routing, a fix necessitated by earlier kernel configuration gaps. It achieves this by injecting static binaries (`extra_execs`), files (`extra_files`), container images (`extra_images`), and Kubernetes manifests (`extra_manifests`) into the VM before running the `k3s_extras` Go binary.
 
-To ensure robustness, the file also includes a failing-path test suite. The `inner_failing_pc` target runs a test designed to fail a pass condition. This is wrapped in `k3s_failing_pc_fails_test`, an `sh_test` that expects failure. It checks that the harness reports the specific error line `deliberate.failure	deliberate`, ensuring the test runner correctly parses and reports failures rather than silently passing on malformed reports.
+The file also constructs a minimal OCI image (`image_layer`, `image`, `image_load`, `image_tarball`) containing `data.txt` to verify image import into k3s' containerd.
+
+For negative testing, `inner_failing_pc` runs a failing Go binary under the `failing` scenario. The `k3s_failing_pc_fails_test` shell script verifies that the harness correctly reports this failure, specifically checking for the parsed "deliberate.failure" line in the report output rather than just the raw ID, ensuring robustness against JSON parsing errors.
