@@ -59,7 +59,14 @@ mkdir -p "$ROOT"
 
 # --- 1. Build (or reuse) the self-contained Debian image. --------------------
 # non-free-firmware gives us linux-firmware; a real kernel + initramfs-tools make
-# it boot on its own. NetworkManager handles wired + WiFi. The label is baked in
+# it boot on its own. NetworkManager handles wired + WiFi; wpasupplicant is
+# listed explicitly because NetworkManager only Recommends it and
+# --no-install-recommends drops it, leaving WiFi devices "unavailable"
+# ("Couldn't initialize supplicant interface"). systemd-timesyncd keeps the
+# clock in step with the cluster (a node minutes off shows negative pod ages
+# and can fail TLS). open-iscsi, nfs-common and cryptsetup are the host pieces
+# Longhorn needs: its manager will not start without iscsiadm, RWX volumes
+# mount over NFS, and encrypted volumes use cryptsetup (dm_crypt). The label is baked in
 # so GRUB + the kernel find root=LABEL. /boot/vmlinuz + /boot/initrd.img stable
 # symlinks let the installer's grub.cfg reference a fixed path.
 cat > "$WORK/Dockerfile" <<DOCKER_EOF
@@ -71,11 +78,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       linux-image-amd64 initramfs-tools \
       firmware-linux-free firmware-iwlwifi firmware-realtek firmware-atheros \
       firmware-misc-nonfree firmware-brcm80211 \
-      network-manager iproute2 iptables kmod ca-certificates \
+      network-manager wpasupplicant systemd-timesyncd iproute2 iptables kmod ca-certificates \
+      open-iscsi nfs-common cryptsetup \
       gawk hostname procps iputils-ping util-linux exfatprogs e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 # Serial console usable; don't let systemd hang on a missing display.
 RUN systemctl enable NetworkManager 2>/dev/null || true
+RUN systemctl enable systemd-timesyncd iscsid 2>/dev/null || true
+# Longhorn checks dm_crypt is loaded (encrypted volumes).
+RUN printf 'dm_crypt\n' > /etc/modules-load.d/longhorn.conf
 # Set the fs label into fstab-free boot: the installer's grub.cfg passes
 # root=LABEL=${LABEL}; NetworkManager is the netdev renderer. Provide stable
 # /boot symlinks for grub.cfg (Debian names files vmlinuz-<ver>).
